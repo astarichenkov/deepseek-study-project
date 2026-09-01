@@ -1,0 +1,20 @@
+[project]
+name = "deepseek-study-app"
+version = "1.0.0"
+description = "Educational web app demonstrating REST API integration with the DeepSeek LLM cloud API"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+# Run async tests (pytest-asyncio) without per-test markers.
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Exclude the real-API smoke test from the normal suite.
+# Run it explicitly with: pytest -m integration
+addopts = "-m 'not integration'"
+markers = [
+    "integration: real DeepSeek API smoke test (requires DEEPSEEK_API_KEY)",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/templates/*"]
