@@ -4,10 +4,12 @@ This guide deploys the DeepSeek Study App to a fresh Ubuntu server using
 Docker and Docker Compose. Target architecture:
 
 ```
-Internet -> Nginx :80 -> FastAPI :8000 (inside Docker network)
+Internet -> Nginx :80 -> Basic Auth -> rate limit -> FastAPI :8000 (inside Docker network)
 ```
 
 The FastAPI port `8000` is **not** exposed publicly — only Nginx `:80` is.
+`GET /health` is the only route **without** Basic Auth (kept public for
+uptime monitoring).
 
 ---
 
@@ -70,13 +72,61 @@ git status --short   # .env must NOT appear as untracked/changeable
 git check-ignore .env && echo ".env is ignored"
 ```
 
-## 5. Start the containers
+## 5. Create the Nginx Basic Auth password file (REQUIRED)
+
+The Nginx container mounts `./.htpasswd` (read-only) at
+`/etc/nginx/.htpasswd` and refuses to start if the file is missing — the
+stack **cannot start correctly until it is created**. The file is
+git-ignored; never commit it.
+
+```bash
+sudo apt-get install -y apache2-utils
+htpasswd -c .htpasswd student      # prompts for a strong password (twice)
+chmod 600 .htpasswd
+```
+
+Verify it is ignored by git:
+
+```bash
+git check-ignore .htpasswd && echo ".htpasswd is ignored"
+```
+
+### Changing the password / adding / removing users
+
+```bash
+htpasswd .htpasswd student         # change password of user 'student'
+htpasswd .htpasswd alice           # add another user
+htpasswd -D .htpasswd alice        # remove a user
+docker compose restart nginx       # apply after any change
+```
+
+### ⚠️ HTTPS warning — read before going live
+
+HTTP Basic Auth only **Base64-encodes** `username:password`; it is **not
+encrypted**. On a public VPS you **must** use **HTTPS** before relying on
+real credentials, otherwise anyone sniffing port 80 can read them. Plan:
+
+1. Point a domain (e.g. `app.example.com`) at the VPS.
+2. Open port 80 to the public (already required).
+3. Install Certbot and obtain a certificate:
+
+   ```bash
+   sudo apt install -y certbot python3-certbot-nginx
+   sudo certbot --nginx -d app.example.com
+   ```
+
+4. Certbot rewrites `nginx/nginx.conf` to add TLS and redirect HTTP→HTTPS.
+   Re-run `sudo certbot renew` automatically via its systemd timer.
+
+Do **not** claim HTTP Basic Auth over plain HTTP is secure.
+
+## 6. Start the containers
 
 ```bash
 docker compose up -d --build
 ```
 
-## 6. Check container status
+## 7. Check container status
 
 ```bash
 docker compose ps
@@ -84,34 +134,52 @@ docker compose ps
 
 Both `app` and `nginx` should be `Up` and healthy.
 
-## 7. Check logs
+## 8. Check logs
 
 ```bash
 docker compose logs -f app     # FastAPI logs (Ctrl+C to exit)
 docker compose logs -f nginx   # Nginx access/error logs
 ```
 
-## 8. Test /health
+## 9. Test /health
 
 ```bash
 curl -s http://localhost/health
 # {"status":"ok","application":"deepseek-study-app"}
 ```
 
-You can also test the real chat endpoint (this consumes a tiny amount of
-balance):
+`/health` is public. Everything else requires Basic Auth:
 
 ```bash
-curl -s -X POST http://localhost/api/chat \
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost/          # 401
+curl -s -u student:PASSWORD http://localhost/ | head                 # 200
+```
+
+Test the real chat endpoint (this consumes a tiny amount of balance):
+
+```bash
+curl -s -u student:PASSWORD -X POST http://localhost/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Say OK"}'
 ```
 
-Open `http://<server-ip>/` in a browser. If you have a domain, point it at
-the server and set `server_name` in `nginx/nginx.conf` (optionally add
-TLS with certbot).
+Verify the rate limit is active (these requests are rejected by Nginx
+before FastAPI/DeepSeek, so no balance is spent):
 
-## 9. Restarting
+```bash
+for i in $(seq 1 15); do
+  curl -s -o /dev/null -w "%{http_code} " http://localhost/api/chat
+  sleep 0.2
+done
+echo
+# expect a mix of 401 and eventually 429
+```
+
+Open `http://<server-ip>/` in a browser and log in when prompted. If you
+have a domain, point it at the server and enable HTTPS with Certbot (see
+section 5).
+
+## 10. Restarting
 
 ```bash
 docker compose restart          # restart containers (no rebuild)
@@ -119,7 +187,7 @@ docker compose down             # stop and remove containers
 docker compose up -d            # start again
 ```
 
-## 10. Updating the application
+## 11. Updating the application
 
 ```bash
 cd deepseek-study-app
@@ -129,7 +197,7 @@ docker compose ps               # verify
 curl -s http://localhost/health
 ```
 
-## 11. Rollback considerations
+## 12. Rollback considerations
 
 - Docker Compose keeps the previous image layers locally, but the `latest`
   tag is overwritten on rebuild. For reliable rollback, tag releases:
@@ -163,7 +231,10 @@ curl -s http://localhost/health
 
 | Symptom                              | Likely fix                                   |
 |--------------------------------------|----------------------------------------------|
+| Nginx container exits on start       | `.htpasswd` missing — create it (section 5), then `docker compose up -d` |
+| `401` from the browser / curl        | Wrong username/password in `.htpasswd`, or credentials not sent; use `curl -u student:PASSWORD` |
 | `401` from `/api/chat`               | Wrong/expired `DEEPSEEK_API_KEY` in `.env`; `docker compose up -d` again |
+| `429` from `/api/chat`               | Rate limit hit (5 req/min/IP) — wait a minute; do not raise the limit casually |
 | `502` from `/api/chat`               | Network/firewall blocks outbound HTTPS, or DeepSeek is unreachable |
 | Port 80 already in use               | `sudo lsof -i :80` to find the process; free the port |
 | `docker compose` not found           | Install the compose plugin (section 2)       |

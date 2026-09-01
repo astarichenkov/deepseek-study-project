@@ -29,7 +29,7 @@ DeepSeek cloud LLM API  (model: deepseek-v4-flash)
 Production topology:
 
 ```
-Internet -> Nginx :80 -> FastAPI :8000 (inside Docker network only)
+Internet -> Nginx :80 -> Basic Auth -> rate limit -> FastAPI :8000 (inside Docker network only)
 ```
 
 ## Technologies
@@ -141,7 +141,10 @@ The app starts even without a key; `/api/chat` then returns a friendly
 ## Tests
 
 The normal suite **never touches the real DeepSeek API** — all DeepSeek
-calls are mocked (dependency overrides / fake client).
+calls are mocked (dependency overrides / fake client). Because Basic Auth
+and rate limiting are enforced by Nginx (not FastAPI), the pytest suite
+stays focused on backend behavior; Nginx auth/rate-limit behaviour is
+verified with curl against the running Docker stack (see DEPLOY.md).
 
 ```bash
 # Run the full normal suite
@@ -161,14 +164,74 @@ requested **and** `DEEPSEEK_API_KEY` is set:
 pytest -m integration
 ```
 
+## Access protection (Nginx Basic Auth + rate limiting)
+
+The app will run on a public VPS, so anonymous users must not be able to call
+the DeepSeek-backed chat endpoint and spend API balance. Protection is
+enforced **entirely by Nginx** — FastAPI does not know about passwords.
+
+- `GET /` and `POST /api/chat` (plus static assets) require **HTTP Basic
+  Auth** (username/password checked by Nginx against `.htpasswd`).
+- `POST /api/chat` is additionally **rate limited** to **5 requests per
+  minute per client IP** with a small burst allowance (`burst=3`); excess
+  requests get **HTTP 429** without ever reaching FastAPI/DeepSeek.
+- `GET /health` stays **public** (no auth, no rate limit) so uptime
+  monitoring works — it exposes no sensitive data.
+
+### Why Basic Auth credentials are not "secure" by themselves
+
+HTTP Basic Auth only **Base64-encodes** `username:password` — it is **not
+encrypted**. Anyone sniffing plain HTTP can decode it. On a public VPS you
+**must** serve the app over **HTTPS** (e.g. with Certbot) before using real
+credentials. See [DEPLOY.md](DEPLOY.md) for the HTTPS preparation steps.
+
+### Creating the password file (required before `docker compose up`)
+
+The Nginx container mounts `./.htpasswd` (read-only) at
+`/etc/nginx/.htpasswd`. **The stack will not start correctly until this
+file exists** (Nginx refuses to start with `auth_basic_user_file` pointing
+at a missing file). The file is git-ignored — never commit it.
+
+On Ubuntu (or any server with apache2-utils):
+
+```bash
+sudo apt-get install -y apache2-utils
+htpasswd -c .htpasswd student   # prompts for a password (enter a strong one)
+```
+
+On other systems, generate an apr1 hash and write the file manually
+(`openssl passwd -apr1` works on most systems, including Git Bash on
+Windows).
+
+### Managing users
+
+```bash
+htpasswd .htpasswd student        # change the password of user 'student'
+htpasswd .htpasswd alice          # add another user
+htpasswd -D .htpasswd alice       # remove a user
+```
+
+After any change: `docker compose restart nginx`.
+
+### How the rate limit protects API balance
+
+Every call to `POST /api/chat` is billed by DeepSeek. Even an
+authenticated user (or a leaked credential) could burn balance by
+automating requests — the Nginx rate limit caps chat requests at
+~5/minute/IP and answers excess with `429`, so DeepSeek is never called
+for rejected requests.
+
 ## Docker
 
 ```bash
-# Build
+# 1. Create the Nginx password file (git-ignored)
+htpasswd -c .htpasswd student     # or: openssl passwd -apr1 ...
+
+# 2. Build
+cp .env.example .env              # set DEEPSEEK_API_KEY first
 docker compose build
 
-# Run (nginx :80 -> app :8000, API key from .env)
-cp .env.example .env   # set DEEPSEEK_API_KEY first
+# 3. Run (nginx :80 -> app :8000, API key from .env)
 docker compose up -d
 ```
 
@@ -201,16 +264,20 @@ curl http://127.0.0.1:8000/health
 
 ### `GET /`
 
-Returns the HTML homepage.
+Returns the HTML homepage. **Requires Basic Auth** in the Docker/production
+topology.
 
 ```bash
-curl http://127.0.0.1:8000/
+curl http://127.0.0.1:8000/                       # 401 without credentials
+curl -u student:password http://127.0.0.1:8000/   # 200 with credentials
 ```
 
 ### `POST /api/chat`
 
+**Requires Basic Auth** and is **rate limited** (5 req/min/IP, burst 3).
+
 ```bash
-curl -X POST http://127.0.0.1:8000/api/chat \
+curl -u student:password -X POST http://127.0.0.1:8000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Explain dependency injection"}'
 ```
