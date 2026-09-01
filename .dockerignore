@@ -1,0 +1,17 @@
+# Build context exclusions for the Docker image.
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+htmlcov
+.env
+.env.*
+tests
+nginx
+DEPLOY.md
+README.md
+requirements-dev.txt
