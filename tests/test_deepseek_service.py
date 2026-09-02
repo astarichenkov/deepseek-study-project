@@ -38,6 +38,7 @@ class FakeMessage:
 class FakeChoice:
     def __init__(self, message):
         self.message = message
+        self.finish_reason = "stop"
 
 
 class FakeChatCompletion:

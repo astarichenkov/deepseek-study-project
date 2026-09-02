@@ -11,6 +11,12 @@ The FastAPI port `8000` is **not** exposed publicly — only Nginx `:80` is.
 `GET /health` is the only route **without** Basic Auth (kept public for
 uptime monitoring).
 
+> **`/api/compare` cost note:** one `POST /api/compare` request makes
+> **two** DeepSeek provider calls (unrestricted + controlled). It is
+> protected by the same Nginx Basic Auth and the same rate-limit zone as
+> `/api/chat` (5 requests/min/IP shared), so worst-case provider spend per
+> client is bounded.
+
 ---
 
 ## 1. Install Docker

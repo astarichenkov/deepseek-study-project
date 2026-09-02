@@ -6,6 +6,13 @@ from pydantic import BaseModel, Field, field_validator
 MAX_MESSAGE_LENGTH = 4000
 
 
+def ensure_not_blank(value: str) -> str:
+    """Reject empty/whitespace-only strings (shared by chat & compare schemas)."""
+    if not value.strip():
+        raise ValueError("Value must not be empty or whitespace-only")
+    return value
+
+
 class ChatRequest(BaseModel):
     """Validated payload for ``POST /api/chat``."""
 
@@ -20,9 +27,7 @@ class ChatRequest(BaseModel):
     @classmethod
     def message_must_not_be_blank(cls, value: str) -> str:
         """Reject empty and whitespace-only messages (e.g. ``"   "``)."""
-        if not value.strip():
-            raise ValueError("Message must not be empty or whitespace-only")
-        return value
+        return ensure_not_blank(value)
 
 
 class ChatResponse(BaseModel):

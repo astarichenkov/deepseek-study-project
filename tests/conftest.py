@@ -13,25 +13,56 @@ from app.api.routes import get_deepseek_service
 from app.config import Settings, get_settings
 from app.main import create_app
 from app.schemas.chat import ChatResponse
-
+from app.schemas.compare import (
+    CompareRequest,
+    CompareResponse,
+    CompareResult,
+    ControlledSettings,
+)
 
 class FakeDeepSeekService:
     """In-memory stand-in for ``DeepSeekService``.
 
     Records the last message it received and can be told to raise a
     specific exception to exercise error handling in the API layer.
+    ``compare`` returns a canned comparison unless ``compare_result`` is
+    set (e.g. to simulate a partial failure).
     """
 
     def __init__(self, answer: str = "Mocked answer from DeepSeek.") -> None:
         self.answer = answer
         self.last_message: str | None = None
         self.raise_error: Exception | None = None
+        self.compare_calls: list[CompareRequest] = []
+        self.compare_result: CompareResponse | None = None
 
     async def chat(self, message: str) -> ChatResponse:
         self.last_message = message
         if self.raise_error is not None:
             raise self.raise_error
         return ChatResponse(answer=self.answer)
+
+    async def compare(self, request: CompareRequest) -> CompareResponse:
+        self.compare_calls.append(request)
+        if self.raise_error is not None:
+            raise self.raise_error
+        if self.compare_result is not None:
+            return self.compare_result
+        stop_list = [request.stop_sequence] if request.stop_sequence else None
+        return CompareResponse(
+            unrestricted=CompareResult(
+                answer="Unrestricted answer.", finish_reason="stop"
+            ),
+            controlled=CompareResult(
+                answer="Controlled answer.",
+                finish_reason="length",
+                settings=ControlledSettings(
+                    response_format=request.response_format.as_api_param(),
+                    max_tokens=request.max_tokens,
+                    stop=stop_list,
+                ),
+            ),
+        )
 
 
 @pytest.fixture
