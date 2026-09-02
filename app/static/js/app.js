@@ -7,7 +7,29 @@
 (function () {
   "use strict";
 
-  var form = document.getElementById("compare-form");
+  function initApp() {
+    // Required DOM contract. If the markup and JS get out of sync (stale
+    // cache / partial deployment), fail CLEARLY in the console instead of
+    // throwing somewhere deep and silently disabling every control.
+    var requiredIds = [
+      "compare-form", "message", "response-format", "max-tokens",
+      "stop-sequence", "reset-json", "compare-button", "loading",
+      "error", "api-preview", "results", "answer-unrestricted",
+      "finish-unrestricted", "answer-controlled", "finish-controlled",
+      "applied-settings", "controlled-error", "summary-section", "summary"
+    ];
+    var missing = requiredIds.filter(function (id) {
+      return !document.getElementById(id);
+    });
+    if (missing.length > 0) {
+      console.error(
+        "DeepSeek Study App: missing DOM elements, frontend disabled:",
+        missing.join(", ")
+      );
+      return;
+    }
+
+    var form = document.getElementById("compare-form");
   var messageEl = document.getElementById("message");
   var formatEl = document.getElementById("response-format");
   var maxTokensEl = document.getElementById("max-tokens");
@@ -269,5 +291,14 @@
     var div = document.createElement("div");
     div.textContent = String(text);
     return div.innerHTML;
+  }
+  }
+
+  // The script sits at the end of <body>, but run safely even if it is ever
+  // moved into <head>: wait for the DOM before wiring the controls.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initApp);
+  } else {
+    initApp();
   }
 })();
