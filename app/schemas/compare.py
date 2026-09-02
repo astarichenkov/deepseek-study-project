@@ -128,10 +128,15 @@ class CompareResult(BaseModel):
 class CompareResponse(BaseModel):
     """Result of one comparison operation (two provider calls).
 
+    ``settings`` echoes the REQUESTED controlled parameters and is always
+    present — the UI needs them even when the controlled provider call
+    fails (they are known before the call).
+
     ``controlled`` is ``None`` (with a friendly ``controlled_error``) when
     the controlled request failed but the unrestricted one succeeded.
     """
 
     unrestricted: CompareResult
+    settings: ControlledSettings
     controlled: CompareResult | None = None
     controlled_error: str | None = None

@@ -49,18 +49,20 @@ class FakeDeepSeekService:
         if self.compare_result is not None:
             return self.compare_result
         stop_list = [request.stop_sequence] if request.stop_sequence else None
+        settings = ControlledSettings(
+            response_format=request.response_format.as_api_param(),
+            max_tokens=request.max_tokens,
+            stop=stop_list,
+        )
         return CompareResponse(
             unrestricted=CompareResult(
                 answer="Unrestricted answer.", finish_reason="stop"
             ),
+            settings=settings,
             controlled=CompareResult(
                 answer="Controlled answer.",
                 finish_reason="length",
-                settings=ControlledSettings(
-                    response_format=request.response_format.as_api_param(),
-                    max_tokens=request.max_tokens,
-                    stop=stop_list,
-                ),
+                settings=settings,
             ),
         )
 

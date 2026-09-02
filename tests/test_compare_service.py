@@ -314,11 +314,90 @@ def test_network_failure_maps_to_deepseek_error(make_service):
 
 
 def test_malformed_provider_response_raises(make_service):
+    """Unrestricted-side malformed response is a total failure -> raises."""
     service, _ = make_service([_completion("", "stop"), _completion("never reached")])
     from app.services.deepseek import DeepSeekMalformedResponseError
 
     with pytest.raises(DeepSeekMalformedResponseError):
         asyncio.run(service.compare(_sample_request()))
+
+
+def test_controlled_empty_content_yields_partial_failure(make_service):
+    """DeepSeek json mode returns EMPTY content when max_tokens is exceeded;
+    the service reports it as a clean partial failure (no fabricated answer,
+    unrestricted result preserved)."""
+    service, _ = make_service(
+        [_completion("Unrestricted OK", "stop"), _completion("", "length")]
+    )
+
+    response = asyncio.run(service.compare(_sample_request()))
+
+    assert response.unrestricted.answer == "Unrestricted OK"
+    assert response.controlled is None
+    assert response.controlled_error
+    assert "response" in response.controlled_error
+    # requested settings still returned
+    assert response.settings.max_tokens == 150
+
+
+def test_controlled_none_content_yields_partial_failure(make_service):
+    service, _ = make_service(
+        [_completion("Unrestricted OK", "stop"), _completion(None, "stop")]
+    )
+
+    response = asyncio.run(service.compare(_sample_request()))
+
+    assert response.unrestricted.answer == "Unrestricted OK"
+    assert response.controlled is None
+    assert response.controlled_error
+
+
+def test_controlled_valid_json_answer_passthrough_unmodified(make_service):
+    raw = '{"advantages": ["Python", "JS", "Go"]}'
+    service, _ = make_service([_completion("text answer", "stop"), _completion(raw, "stop")])
+
+    response = asyncio.run(service.compare(_sample_request()))
+
+    assert response.controlled.answer == raw  # provider content preserved verbatim
+
+
+def test_controlled_invalid_json_passthrough_unmodified(make_service):
+    """If the provider violates json mode, the raw content is preserved
+    (no rewriting/fabrication); validation is display-only metadata."""
+    raw = '{"advantages": [unclosed'
+    service, _ = make_service([_completion("text answer", "stop"), _completion(raw, "stop")])
+
+    response = asyncio.run(service.compare(_sample_request()))
+
+    assert response.controlled.answer == raw
+    assert response.controlled.finish_reason == "stop"
+
+
+def test_requested_settings_survive_controlled_failure(make_service):
+    """settings are echoed at CompareResponse level even when controlled=None."""
+    service, _ = make_service(
+        [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
+    )
+
+    response = asyncio.run(service.compare(_sample_request()))
+
+    assert response.controlled is None
+    assert response.settings.response_format == {"type": "json_object"}
+    assert response.settings.max_tokens == 150
+    assert response.settings.stop == ["<END>"]
+    assert response.controlled_error
+
+
+def test_no_fabricated_finish_reason_on_failure(make_service):
+    service, _ = make_service(
+        [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
+    )
+
+    response = asyncio.run(service.compare(_sample_request()))
+
+    # controlled is None -> there is no finish_reason at all (nothing invented)
+    assert response.controlled is None
+    assert response.controlled_error is not None
 
 
 def test_unexpected_provider_error_raises_deepseek_error_500(make_service):

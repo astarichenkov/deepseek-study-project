@@ -16,7 +16,8 @@
       "stop-sequence", "reset-json", "compare-button", "loading",
       "error", "api-preview", "results", "answer-unrestricted",
       "finish-unrestricted", "answer-controlled", "finish-controlled",
-      "applied-settings", "controlled-error", "summary-section", "summary"
+      "applied-settings", "applied-heading", "controlled-error",
+      "summary-section", "summary"
     ];
     var missing = requiredIds.filter(function (id) {
       return !document.getElementById(id);
@@ -46,6 +47,7 @@
   var answerControlled = document.getElementById("answer-controlled");
   var finishControlled = document.getElementById("finish-controlled");
   var appliedSettings = document.getElementById("applied-settings");
+  var appliedHeading = document.getElementById("applied-heading");
   var controlledError = document.getElementById("controlled-error");
   var summarySection = document.getElementById("summary-section");
   var summaryList = document.getElementById("summary");
@@ -208,20 +210,25 @@
 
   /* ---------------- Rendering ---------------- */
   function render(data) {
-    // Unrestricted card
+    // Unrestricted card — raw provider text, actual finish_reason.
     answerUnrestricted.textContent = data.unrestricted.answer || "";
     finishUnrestricted.textContent = data.unrestricted.finish_reason || "—";
 
     // Controlled card
     if (data.controlled) {
-      answerControlled.textContent = data.controlled.answer || "";
+      // Display provider content verbatim; pretty-print it ONLY if it is
+      // valid JSON (json_object mode) — never rewrite or fabricate.
+      answerControlled.textContent = displayAnswer(
+        data.controlled.answer || "",
+        data.controlled.settings
+      );
       finishControlled.textContent = data.controlled.finish_reason || "—";
-      var settings = data.controlled.settings || {};
+      appliedHeading.textContent = "Применённые API-параметры";
       appliedSettings.textContent = JSON.stringify(
         {
-          response_format: settings.response_format,
-          max_tokens: settings.max_tokens,
-          stop: settings.stop
+          response_format: data.controlled.settings && data.controlled.settings.response_format,
+          max_tokens: data.controlled.settings && data.controlled.settings.max_tokens,
+          stop: data.controlled.settings && data.controlled.settings.stop
         },
         null,
         2
@@ -229,9 +236,21 @@
       controlledError.classList.add("hidden");
       controlledError.textContent = "";
     } else {
+      // Controlled provider call failed. The REQUESTED parameters are known
+      // before the call and are still displayed — labelled as requested,
+      // not as applied. finish_reason is genuinely unavailable.
       answerControlled.textContent = "";
-      finishControlled.textContent = "—";
-      appliedSettings.textContent = "";
+      finishControlled.textContent = "недоступна — запрос завершился ошибкой";
+      appliedHeading.textContent = "Запрошенные API-параметры";
+      appliedSettings.textContent = JSON.stringify(
+        {
+          response_format: data.settings && data.settings.response_format,
+          max_tokens: data.settings && data.settings.max_tokens,
+          stop: data.settings && data.settings.stop
+        },
+        null,
+        2
+      );
       controlledError.textContent =
         "Контролируемый запрос не выполнен: " +
         (data.controlled_error || "неизвестная ошибка.");
@@ -244,21 +263,40 @@
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  function displayAnswer(raw, settings) {
+    // In json_object mode, show valid JSON nicely formatted for reading;
+    // the raw model text is preserved for invalid JSON or text mode.
+    var isJsonMode = settings && settings.response_format &&
+      settings.response_format.type === "json_object";
+    if (isJsonMode && raw) {
+      try {
+        return JSON.stringify(JSON.parse(raw), null, 2);
+      } catch (err) {
+        return raw; // provider violated json mode — show content as-is
+      }
+    }
+    return raw;
+  }
+
   function renderSummary(data) {
     var controlled = data.controlled;
+    var finishC = controlled
+      ? (controlled.finish_reason || "—")
+      : "недоступна (запрос завершился ошибкой)";
     var items = [
       "Запрос отправлен в DeepSeek дважды — один и тот же текст, без изменений.",
       "Формат: response_format = " + JSON.stringify(
-        controlled && controlled.settings ? controlled.settings.response_format : null
+        data.settings ? data.settings.response_format : null
       ) + " — передан в API только в контролируемом запросе.",
-      "Длина: max_tokens = " + (controlled && controlled.settings ? controlled.settings.max_tokens : "—") +
+      "Длина: max_tokens = " + (data.settings ? data.settings.max_tokens : "—") +
         " — лимит выходных токенов контролируемого запроса.",
       "Завершение: stop = " + JSON.stringify(
-        controlled && controlled.settings ? controlled.settings.stop : null
+        data.settings ? data.settings.stop : null
       ) + " — стоп-последовательность контролируемого запроса.",
       "Причина завершения: без ограничений — " + (data.unrestricted.finish_reason || "—") +
-        "; с ограничениями — " + ((controlled && controlled.finish_reason) || "—") + "."
-    ];
+        "; с ограничениями — " + finishC + ".",
+      controlled ? "" : "Контролируемый запрос не выполнен — параметры показаны как запрошенные."
+    ].filter(function (item) { return item !== ""; });
     summaryList.innerHTML = items
       .map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; })
       .join("");

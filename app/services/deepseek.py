@@ -20,6 +20,8 @@ from openai import (
     RateLimitError,
 )
 
+import logging
+
 from app.config import Settings
 from app.schemas.chat import ChatResponse
 from app.schemas.compare import (
@@ -28,6 +30,8 @@ from app.schemas.compare import (
     CompareResult,
     ControlledSettings,
 )
+
+logger = logging.getLogger("app.services.deepseek")
 
 # Application-level default output-token cap used by /api/chat and by the
 # UNRESTRICTED side of a comparison. It keeps normal responses bounded and
@@ -167,6 +171,11 @@ class DeepSeekService:
         instruction = self._build_control_instruction(request)
         controlled_messages = [system, user, {"role": "user", "content": instruction}]
         stop_list = [request.stop_sequence] if request.stop_sequence else None
+        settings_echo = ControlledSettings(
+            response_format=request.response_format.as_api_param(),
+            max_tokens=request.max_tokens,
+            stop=stop_list,
+        )
         try:
             controlled = await self._complete(
                 controlled_messages,
@@ -175,22 +184,19 @@ class DeepSeekService:
                 stop=request.stop_sequence,
             )
         except DeepSeekError as exc:
+            # The requested settings are known BEFORE the provider call and
+            # are returned so the UI can display them even on failure.
             return CompareResponse(
                 unrestricted=self._result(unrestricted),
+                settings=settings_echo,
                 controlled=None,
                 controlled_error=exc.message,
             )
 
         return CompareResponse(
             unrestricted=self._result(unrestricted),
-            controlled=self._result(
-                controlled,
-                settings=ControlledSettings(
-                    response_format=request.response_format.as_api_param(),
-                    max_tokens=request.max_tokens,
-                    stop=stop_list,
-                ),
-            ),
+            settings=settings_echo,
+            controlled=self._result(controlled, settings=settings_echo),
         )
 
     # ------------------------------------------------------------------
@@ -244,9 +250,15 @@ class DeepSeekService:
         """
         parts = []
         if request.response_format.type == "json_object":
+            # Compact JSON: DeepSeek's JSON Output mode returns EMPTY content
+            # when the generated JSON would exceed max_tokens (it does not
+            # return truncated/invalid JSON). Forcing a small fixed shape
+            # keeps the output well inside the token cap, so the controlled
+            # request succeeds reliably.
             parts.append(
-                "Сначала напиши валидный JSON-объект (JSON) с краткими пунктами, "
-                'например: {"advantages": ["...", "...", "..."]}.'
+                "Сначала напиши компактный валидный JSON-объект (JSON) вида "
+                '{"advantages": ["пункт 1", "пункт 2", "пункт 3"]}, '
+                "где каждый пункт — одно короткое предложение (не более 6 слов)."
             )
         if request.stop_sequence:
             if request.response_format.type == "json_object":
@@ -297,18 +309,28 @@ class DeepSeekService:
         try:
             response = await self._client.chat.completions.create(**params)
         except AuthenticationError as exc:
+            logger.warning("DeepSeek auth error (type=%s)", type(exc).__name__)
             raise DeepSeekAuthenticationError() from exc
         except RateLimitError as exc:
+            logger.warning("DeepSeek rate limit (type=%s)", type(exc).__name__)
             raise DeepSeekRateLimitError() from exc
         except APITimeoutError as exc:
+            logger.warning("DeepSeek timeout (type=%s)", type(exc).__name__)
             raise DeepSeekTimeoutError() from exc
         except APIConnectionError as exc:
+            logger.warning("DeepSeek connection error (type=%s)", type(exc).__name__)
             raise DeepSeekNetworkError() from exc
         except APIError as exc:
+            logger.warning(
+                "DeepSeek API error (type=%s, status=%s)",
+                type(exc).__name__,
+                getattr(exc, "status_code", "?"),
+            )
             raise DeepSeekError(
                 "The DeepSeek API reported an error. Please try again.", 502
             ) from exc
         except Exception as exc:  # pragma: no cover - defensive catch-all
+            logger.exception("Unexpected DeepSeek client error (type=%s)", type(exc).__name__)
             raise DeepSeekError(
                 "An unexpected error occurred while contacting DeepSeek.", 500
             ) from exc
@@ -318,10 +340,38 @@ class DeepSeekService:
             choice = response.choices[0]
             content = choice.message.content
             finish_reason = choice.finish_reason
-        except (AttributeError, IndexError, TypeError):
-            raise DeepSeekMalformedResponseError() from None
+        except (AttributeError, IndexError, TypeError) as exc:
+            try:
+                choices_len = len(response.choices)
+            except Exception:
+                choices_len = "?"
+            try:
+                first_finish = response.choices[0].finish_reason
+            except Exception:
+                first_finish = "?"
+            logger.warning(
+                "Malformed DeepSeek response structure (type=%s, choices_len=%s, "
+                "first_finish_reason=%s)",
+                type(response).__name__,
+                choices_len,
+                first_finish,
+            )
+            raise DeepSeekMalformedResponseError() from exc
 
-        if not content or not content.strip():
-            raise DeepSeekMalformedResponseError()
+        if content is None or not content.strip():
+            # Real DeepSeek behaviour: with response_format=json_object the
+            # provider returns EMPTY content (finish_reason "length") when
+            # generation would exceed max_tokens — it refuses to emit
+            # truncated/invalid JSON. Log safe diagnostics, do not fake data.
+            logger.warning(
+                "DeepSeek returned empty content (content_type=%s, "
+                "finish_reason=%r, response_format=%s, max_tokens=%s, stop=%s)",
+                type(content).__name__ if content is not None else "None",
+                finish_reason,
+                params.get("response_format"),
+                params.get("max_tokens"),
+                params.get("stop"),
+            )
+            raise DeepSeekMalformedResponseError() from None
 
         return CompareResult(answer=content.strip(), finish_reason=finish_reason)

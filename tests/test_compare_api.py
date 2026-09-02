@@ -26,11 +26,12 @@ def test_compare_success(client, fake_service):
     assert body["controlled"]["answer"] == "Controlled answer."
     assert body["unrestricted"]["finish_reason"] == "stop"
     assert body["controlled"]["finish_reason"] == "length"
-    # Applied API parameters echoed on the controlled side
+    # Applied API parameters echoed on the controlled side AND at top level
     settings = body["controlled"]["settings"]
     assert settings["response_format"] == {"type": "json_object"}
     assert settings["max_tokens"] == 150
     assert settings["stop"] == ["<END>"]
+    assert body["settings"] == settings
     assert body["unrestricted"]["settings"] is None
     assert body["controlled_error"] is None
     # Backend received exactly the validated request
@@ -137,6 +138,11 @@ def test_compare_provider_failure_maps_to_http(client, fake_service):
 def test_compare_partial_failure_returns_200_with_controlled_error(client, fake_service):
     fake_service.compare_result = CompareResponse(
         unrestricted=CompareResult(answer="Unrestricted answer.", finish_reason="stop"),
+        settings=ControlledSettings(
+            response_format={"type": "json_object"},
+            max_tokens=150,
+            stop=["<END>"],
+        ),
         controlled=None,
         controlled_error="DeepSeek rate limit exceeded. Please wait a moment and try again.",
     )
@@ -146,6 +152,12 @@ def test_compare_partial_failure_returns_200_with_controlled_error(client, fake_
     assert body["unrestricted"]["answer"] == "Unrestricted answer."
     assert body["controlled"] is None
     assert "rate limit" in body["controlled_error"]
+    # Requested/applied parameters must survive a controlled failure
+    assert body["settings"]["response_format"] == {"type": "json_object"}
+    assert body["settings"]["max_tokens"] == 150
+    assert body["settings"]["stop"] == ["<END>"]
+    # No fabricated finish_reason on the failed side
+    assert "finish_reason" not in (body["controlled"] or {})
 
 
 def test_compare_unexpected_error_returns_generic_500(client, fake_service):
