@@ -138,18 +138,19 @@ class DeepSeekService:
         1. ``unrestricted`` — system + original user prompt only, app default
            cap. NO response_format, NO custom max_tokens, NO stop, NO JSON
            structure / termination instruction.
-        2. ``controlled``   — the SAME original user prompt plus a control
-           instruction, and REAL API parameters:
+        2. ``controlled``   — the SAME original user prompt plus a JSON
+           control instruction, and REAL API parameters:
 
            * ``response_format={"type": "json_object"}`` (fixed);
            * ``max_tokens=<from UI>``;
-           * ``stop=[<from UI>]`` when a sequence is set.
+           * ``stop=[<from UI>]`` only when the user provided a sequence
+             (empty is omitted — no artificial stop marker by default).
 
            The control instruction is appended to the SAME final user message
            as the original prompt (kept verbatim). It explicitly mentions
-           JSON, embeds the user's editable JSON structure, and (when a stop
-           sequence is set) tells the model to emit that marker after the
-           JSON.
+           JSON, embeds the user's editable JSON structure and asks the model
+           to fill it with a bounded list. No artificial END marker is
+           injected, so the JSON keeps its natural ending.
 
         Failure policy (partial-failure handling):
 
@@ -157,24 +158,42 @@ class DeepSeekService:
           compare);
         * if the CONTROLLED call fails -> the unrestricted result is still
           returned with ``controlled=None``, a friendly ``controlled_error``
-          and the requested ``settings`` (response_format / max_tokens /
-          stop / json_structure) so the UI can show what was requested.
+          and the requested ``settings`` so the UI can show what was
+          requested.
 
         No retries; one comparison never spends more than two provider calls.
         """
+        json_struct_size = len(json.dumps(request.json_structure, ensure_ascii=False))
+        logger.info(
+            "comparison started message_length=%s json_structure_present=%s "
+            "json_structure_size=%s response_format=json_object max_tokens=%s "
+            "stop_configured=%s",
+            len(request.message),
+            True,
+            json_struct_size,
+            request.max_tokens,
+            bool(request.stop_sequence),
+        )
+
         system = {"role": "system", "content": self._settings.system_prompt}
         user = {"role": "user", "content": request.message}
 
         # 1) Unrestricted request.
+        logger.info("unrestricted call started")
         unrestricted = await self._complete(
             [system, user],
             max_tokens=DEFAULT_MAX_TOKENS,
         )
+        logger.info(
+            "unrestricted call completed finish_reason=%s content_length=%s",
+            unrestricted.finish_reason,
+            len(unrestricted.answer),
+        )
 
         # 2) Controlled request.
         # Empirically DeepSeek json mode is most reliable when the final user
-        # message itself carries the JSON instruction (a bare prompt following a
-        # separate instruction message is more likely to yield empty output).
+        # message itself carries the JSON instruction (a bare prompt following
+        # a separate instruction message is more likely to yield empty output).
         # The original user prompt is kept VERBATIM as the prefix of the final
         # message, then the control instruction is appended.
         instruction = self._build_control_instruction(request)
@@ -187,6 +206,12 @@ class DeepSeekService:
             stop=stop_list,
             json_structure=request.json_structure,
         )
+        logger.info(
+            "controlled call started response_format=json_object max_tokens=%s "
+            "stop_configured=%s",
+            request.max_tokens,
+            bool(request.stop_sequence),
+        )
         try:
             controlled = await self._complete(
                 controlled_messages,
@@ -195,6 +220,9 @@ class DeepSeekService:
                 stop=request.stop_sequence,
             )
         except DeepSeekError as exc:
+            logger.warning(
+                "controlled call failed exception_class=%s", type(exc).__name__
+            )
             return CompareResponse(
                 unrestricted=self._result(unrestricted),
                 settings=settings_echo,
@@ -202,6 +230,12 @@ class DeepSeekService:
                 controlled_error=exc.message,
             )
 
+        logger.info(
+            "controlled call completed finish_reason=%s content_length=%s",
+            controlled.finish_reason,
+            len(controlled.answer),
+        )
+        logger.info("comparison completed")
         return CompareResponse(
             unrestricted=self._result(unrestricted),
             settings=settings_echo,
@@ -223,19 +257,17 @@ class DeepSeekService:
         )
 
     def _build_control_instruction(self, request: CompareRequest) -> str:
-        """The controlled-request instruction.
-
-        It is a real ``messages`` instruction (NOT an API parameter):
+        """The controlled-request instruction (a real ``messages`` message).
 
         * explicitly mentions JSON (DeepSeek JSON Output requires the word
           "json" in the messages when response_format=json_object is used);
         * embeds the user's editable JSON structure verbatim;
-        * asks the model to fill the structure from the user request;
-        * (dynamic) asks the model to emit the user's stop marker after the
-          JSON when a stop sequence is configured — the marker is ALSO sent
-          as the real ``stop`` API parameter.
+        * asks the model to fill the structure with a BOUNDED list (max ~7
+          items) so the JSON stays compact and json mode completes it;
+        * does NOT inject an artificial END marker — the JSON keeps its
+          natural ending (stop is optional and separate).
 
-        The original user message is NOT altered — it is appended unchanged.
+        The original user message is NOT altered.
         """
         structure_text = json.dumps(
             request.json_structure, ensure_ascii=False, indent=2
@@ -244,16 +276,11 @@ class DeepSeekService:
             "Верни ответ только в формате JSON.",
             "Используй следующую структуру JSON:\n" + structure_text,
             (
-                "Заполни эту структуру реальными данными по запросу пользователя. "
-                "Перечисли примерно 6-8 основных продуктов; "
-                "name — короткое слово, count — число, unit — сокращение "
-                "(шт/г/кг/л). Никакого текста вне JSON."
+                "Заполни структуру реальными данными по запросу пользователя. "
+                "Укажи только основные ингредиенты — максимум 7 позиций. "
+                "Ответ должен содержать только корректный JSON."
             ),
         ]
-        if request.stop_sequence:
-            parts.append(
-                f"После завершения JSON сгенерируй маркер {request.stop_sequence}."
-            )
         return "\n\n".join(parts)
 
     async def _complete(
@@ -331,27 +358,35 @@ class DeepSeekService:
             except Exception:
                 choices_len = "?"
             try:
+                first_message = response.choices[0].message
+                message_present = first_message is not None
+            except Exception:
+                first_message = None
+                message_present = "?"
+            try:
                 first_finish = response.choices[0].finish_reason
             except Exception:
                 first_finish = "?"
             logger.warning(
                 "Malformed DeepSeek response structure (type=%s, choices_len=%s, "
-                "first_finish_reason=%s)",
+                "first_choice_has_message=%s, first_finish_reason=%s) — "
+                "choices missing/empty or message absent",
                 type(response).__name__,
                 choices_len,
+                message_present,
                 first_finish,
             )
             raise DeepSeekMalformedResponseError() from exc
 
         if content is None or not content.strip():
             # Real DeepSeek behaviour: with response_format=json_object the
-            # provider returns EMPTY content (finish_reason "length") when
-            # generation would exceed max_tokens — it refuses to emit
-            # truncated/invalid JSON. Log safe diagnostics, do not fake data.
+            # provider sometimes returns EMPTY content (finish_reason
+            # "length"/"stop"). Log safe diagnostics; do not fake data.
             logger.warning(
-                "DeepSeek returned empty content (content_type=%s, "
-                "finish_reason=%r, response_format=%s, max_tokens=%s, stop=%s)",
-                type(content).__name__ if content is not None else "None",
+                "DeepSeek returned empty content (content_is_none=%s, "
+                "content_length=0, finish_reason=%r, response_format=%s, "
+                "max_tokens=%s, stop=%s)",
+                content is None,
                 finish_reason,
                 params.get("response_format"),
                 params.get("max_tokens"),

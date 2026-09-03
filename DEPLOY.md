@@ -147,6 +147,23 @@ docker compose logs -f app     # FastAPI logs (Ctrl+C to exit)
 docker compose logs -f nginx   # Nginx access/error logs
 ```
 
+### Persistent logs (host disk)
+
+In addition to `docker compose logs`, the stack writes persistent logs to
+host directories that survive container recreation:
+
+- Application: `./logs/app.log` (auto-rotated ~5 MB × 3 backups)
+- Nginx access: `./logs/nginx/access.log`
+- Nginx errors: `./logs/nginx/error.log`
+
+They are bind-mounted (`./logs` -> `/app/logs`; `./logs/nginx` ->
+`/var/log/nginx`) and are git-ignored. `docker compose` creates the host
+directories automatically; on a Linux VPS ensure the `app` and `nginx`
+users can write there (Docker handles this as root-owned files, which is
+fine for reading them with `sudo`/`cat`). The application falls back to
+stdout-only if the log file cannot be written, so the app never fails due
+to logging.
+
 ## 9. Test /health
 
 ```bash

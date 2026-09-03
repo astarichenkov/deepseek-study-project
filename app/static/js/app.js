@@ -108,9 +108,12 @@
         max_tokens: (function () {
           var mt = parseInt(maxTokensEl.value, 10);
           return Number.isInteger(mt) ? mt : null;
-        })(),
-        stop: stop ? [stop] : null
+        })()
       };
+      // stop is OPTIONAL: it is only shown (and only sent) when non-empty.
+      if (stop) {
+        params.stop = [stop];
+      }
       previewEl.textContent = JSON.stringify(params, null, 2);
 
       try {

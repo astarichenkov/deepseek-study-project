@@ -23,7 +23,7 @@
           id="message"
           rows="3"
           maxlength="{{ max_message_length }}"
-        >Напиши список продуктов для приготовления борща на 4 порции.</textarea>
+        >Напиши список основных продуктов для приготовления борща на 4 порции.</textarea>
         <p class="field-hint">
           Этот текст отправляется в DeepSeek дважды и в обоих случаях
           остаётся одинаковым.
@@ -110,7 +110,7 @@
                     aria-expanded="false" aria-controls="tip-max-tokens">ⓘ</button>
           </div>
           <div class="input-with-unit">
-            <input type="number" id="max-tokens" min="16" max="2000" step="1" value="800"
+            <input type="number" id="max-tokens" min="16" max="2000" step="1" value="500"
                    aria-describedby="tip-max-tokens">
             <span class="unit">токенов</span>
           </div>
@@ -135,8 +135,9 @@
                     aria-label="Подробнее об условии завершения"
                     aria-expanded="false" aria-controls="tip-stop">ⓘ</button>
           </div>
-          <input type="text" id="stop-sequence" maxlength="50" value="END_OF_RESPONSE"
+          <input type="text" id="stop-sequence" maxlength="50" value="" placeholder="например, STOP (необязательно)"
                  aria-describedby="tip-stop">
+          <p class="field-hint">Необязательно. Может преждевременно прервать JSON-ответ.</p>
           <div class="tooltip" id="tip-stop" role="tooltip">
             <strong>Что делает:</strong> стоп-последовательность — маркер,
             при появлении которого генерация прекращается.<br>
@@ -165,10 +166,7 @@
   "response_format": {
     "type": "json_object"
   },
-  "max_tokens": 800,
-  "stop": [
-    "END_OF_RESPONSE"
-  ]
+  "max_tokens": 500
 }</pre>
         <p class="field-hint">
           response_format = API-уровень JSON-режима · max_tokens = лимит длины ·

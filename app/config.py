@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Input validation limit shared with the Pydantic schema
     max_message_length: int = MAX_MESSAGE_LENGTH
 
+    # Persistent application log file (mounted ./logs -> /app/logs in Docker).
+    app_log_file: str = "logs/app.log"
+
     @property
     def has_deepseek_api_key(self) -> bool:
         """True when a real key was provided via the environment."""

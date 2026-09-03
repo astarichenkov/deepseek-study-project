@@ -11,9 +11,14 @@ The comparison sends the SAME user prompt twice:
   * ``json_structure`` — user-editable JSON object describing the desired
     output structure, embedded in the controlled ``messages`` as an
     instruction;
+  * ``response_format={"type": "json_object"}`` — fixed by the application
+    (JSON Output mode; the frontend never supplies it);
+  * ``json_structure`` — user-editable JSON object describing the desired
+    output structure, embedded in the controlled ``messages`` as an
+    instruction;
   * ``max_tokens`` — output-token limit (real API parameter);
-  * ``stop`` / ``stop_sequence`` — generation-termination marker (real API
-    parameter) plus a dynamic instruction to emit the marker.
+  * ``stop`` / ``stop_sequence`` — OPTIONAL generation-termination marker
+    (real API parameter). When empty it is NOT sent.
 
 ``response_format`` is NOT a prompt instruction and NOT arbitrary SDK JSON —
 the UI exposes it read-only and the backend hard-codes
@@ -28,12 +33,12 @@ from app.schemas.chat import MAX_MESSAGE_LENGTH, ensure_not_blank
 MAX_STOP_SEQUENCE_LENGTH = 50
 MIN_MAX_TOKENS = 16
 MAX_MAX_TOKENS = 2000
-# NOTE (verified against DeepSeek): JSON Output mode returns EMPTY or
-# truncated-invalid content whenever the model's intended output is large
-# (a full Russian data list), regardless of max_tokens. Keeping the list
-# small (the instruction bounds it) and giving a generous budget makes it
-# work reliably. 800 is the working default.
-DEFAULT_MAX_TOKENS = 800
+# Working default. Kept compact (instruction bounds the list to ~7 items) so
+# the JSON stays within the token budget and DeepSeek json mode completes it.
+DEFAULT_MAX_TOKENS = 500
+
+# Upper bound for the serialized user JSON structure (defensive size guard).
+MAX_JSON_STRUCTURE_BYTES = 2000
 
 # response_format is fixed by the application for the controlled request.
 FIXED_RESPONSE_FORMAT: dict = {"type": "json_object"}
@@ -90,11 +95,17 @@ class CompareRequest(BaseModel):
     @classmethod
     def json_structure_must_be_non_empty_object(cls, value: dict) -> dict:
         """Root must be a non-empty JSON object (a bare list/scalar or an
-        empty object is not a usable structure)."""
+        empty object is not a usable structure), and it must not be
+        unreasonably large."""
         if not isinstance(value, dict):
             raise ValueError("json_structure must be a JSON object")
         if not value:
             raise ValueError("json_structure must not be empty")
+        size = len(json.dumps(value, ensure_ascii=False))
+        if size > MAX_JSON_STRUCTURE_BYTES:
+            raise ValueError(
+                f"json_structure is too large (max {MAX_JSON_STRUCTURE_BYTES} chars)"
+            )
         return value
 
     @field_validator("stop_sequence")

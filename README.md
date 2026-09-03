@@ -99,66 +99,99 @@ Model: `deepseek-v4-flash`. Every request includes a system prompt
 
 ## Управление ответом модели (учебное задание)
 
-Образовательное сравнение: один и тот же запрос отправляется в DeepSeek
-дважды и показывает, как API-управление ответом меняет результат.
+Образовательное сравнение: один и тот же запрос отправляется в DeepSeek дважды —
+«Без ограничений» и «С ограничениями» — и показывает, как API-управление ответом
+меняет результат.
 
-Запрос по умолчанию (можно редактировать):
+Запрос по умолчанию (редактируемый):
 
-> Напиши список продуктов для приготовления борща на 4 порции.
+> Напиши список основных продуктов для приготовления борща на 4 порции.
 
-- **Без ограничений** — оригинальный запрос + обычное системное сообщение и
-  стандартный лимит токенов (`DEFAULT_MAX_TOKENS = 1024`). Без
-  `response_format`, без `max_tokens` из формы, без `stop`, без инструкций.
-- **С ограничениями** — тот же самый запрос + реальные API-ограничения.
+### Зачем дважды
 
-### Контролируемый запрос: реальные API-механизмы
+Чтобы изолировать влияние настроек, текст запроса в обоих вызовах **одинаков**.
+Сравнение выполняется через один `POST /api/compare`, который делает ровно **два**
+обращения к DeepSeek.
 
-| Управление               | Механизм API                          | Что это                           |
-|--------------------------|---------------------------------------|-----------------------------------|
-| Режим формата            | `response_format={"type":"json_object"}` (фиксирован) | JSON Output — вывод обязан быть JSON-объектом |
-| Структура ответа         | инструкция в `messages` (поле `json_structure`) | описывает желаемые ключи (напр. products/name/count/unit) |
-| Максимальная длина       | `max_tokens`                          | лимит выходных токенов           |
-| Завершение               | `stop=[...]` + инструкция «сгенерируй маркер …» | стоп-маркер завершения генерации |
+### Без ограничений (unrestricted)
 
-`response_format` — API-параметр уровня формата; структура JSON передаётся
-отдельной инструкцией в `messages` (это не API-параметр и не произвольные
-аргументы SDK). `json_structure` редактируется на лету, валидируется как
-непустой JSON-объект на клиенте и на бэкенде (HTTP 422 до вызова провайдера).
+Оригинальный запрос + обычное системное сообщение + стандартный лимит токенов
+(`DEFAULT_MAX_TOKENS = 1024`). Без `response_format`, без `max_tokens` из формы,
+без `stop`, без инструкций о структуре JSON.
 
-`max_tokens` — API-лимит; модель может закончить раньше, при исчерпании
-лимита `finish_reason` станет `"length"`. `stop` — стоп-последовательность;
-сам маркер обычно не попадает в ответ. В контролируемый запрос динамически
-добавляется «После завершения JSON сгенерируй маркер END_OF_RESPONSE.».
+### С ограничениями (controlled)
+
+Тот же запрос + реальные API-управление ответом:
+
+| Управление                | Механизм API                        | Что это |
+|---------------------------|-------------------------------------|---------|
+| Формат ответа             | `response_format={"type":"json_object"}` (фиксирован) | JSON Output — ответ обязан быть JSON-объектом |
+| Структура ответа          | инструкция в `messages` (`json_structure`) | задаёт желаемые ключи (products/name/count/unit) |
+| Максимальная длина        | `max_tokens` (по умолчанию 500)     | лимит генерируемых токенов |
+| Завершение                | `stop=[...]` (необязательно, пусто по умолчанию) | стоп-последовательность |
+
+### response_format vs структура JSON
+
+`response_format` — **API-параметр уровня формата**: он говорит «верни объект JSON»,
+но сам по себе не задаёт поля. Поля (`name`, `count`, `unit` …) описываются
+**отдельно** через редактируемую «Требуемую структуру JSON-ответа», которая
+передаётся как **инструкция в messages** (это не SDK-конфиг и не произвольные
+аргументы). Редактируемая структура валидируется как непустой JSON-объект на
+клиенте и на бэкенде (HTTP 422 до вызова провайдера).
+
+### max_tokens
+
+`max_tokens` — реальный API-лимит генерации (не обрезка в Python/JS). Токен ≠
+буква и ≠ слово. Модель может закончить раньше; при исчерпании лимита
+`finish_reason` станет `"length"`. Слишком малый лимит может дать незавершённый JSON.
+
+### stop — необязательно
+
+`stop` **пуст по умолчанию** и в этом случае **не передаётся** в API:
+
+```python
+client.chat.completions.create(..., response_format={"type":"json_object"}, max_tokens=500)
+```
+
+Если ввести, например, `STOP`, то уйдёт `stop=["STOP"]`. `stop` — «прекрати
+генерацию при достижении указанной последовательности» (в отличие от
+`max_tokens` — «не больше N токенов»). Для JSON стоп обычно не нужен: у JSON есть
+естественное завершение. Плохо подобранный `stop` может оборвать генерацию
+**внутри** JSON и дать некорректный/незавершённый ответ — это ограничение
+показывается студенту. Поле существует потому, что задание требует
+продемонстрировать API-управление завершением.
+
+Ранее в демонстрации применялся искусственный маркер `END_OF_RESPONSE`, который
+делал вывод ненадёжным (модель могла не выдать маркер, а стоп обрывал JSON).
+Теперь маркер НЕ добавляется, и JSON-ответ имеет естественное окончание.
 
 ### finish_reason
 
-Показывается реальный `choices[0].finish_reason`: `stop` (штатно/по стоп-маркеру)
-или `length` (достигнут max_tokens). Не выдумывается.
+Показывается реальный `choices[0].finish_reason`: `stop` (штатно/по стоп-условию)
+или `length` (достигнут `max_tokens`). Если провайдерный запрос не удался,
+показывается «недоступна — запрос завершился ошибкой». Значение не выдумывается.
 
-### Известное ограничение (проверено на реальном API)
+### Частичный сбой
 
-В режиме JSON Output (``response_format=json_object``) DeepSeek НЕ возвращает
-обрезанный JSON: если результат превысил бы ``max_tokens``, возвращается пустой
-контент с ``finish_reason="length"``. Кириллица токенизируется примерно как
-1 токен на символ, поэтому объёмный русский JSON (например, список продуктов
-борща) не умещается в 300 токенов. Поэтому рабочий пример по умолчанию использует
-``max_tokens=800``; при слишком малом лимите контролируемый запрос может вернуть
-пустой ответ — это реальное поведение API, а не подделка.
+Если «Без ограничений» успешно, а «С ограничениями» нет, приложение показывает
+ответ unrestricted, сообщение об ошибке controlled, а также **запрошенные**
+параметры (`response_format`, `max_tokens`, `stop`, `json_structure`). Повторных
+платных вызовов не делается.
 
 ### Стоимость
 
 Одно сравнение = один `POST /api/compare` = ровно **два** обращения к DeepSeek.
-UI показывает это. Эндпоинт под Nginx Basic Auth и тем же rate limit
-(5 запросов/мин на IP), так что расход ограничен.
+Эндпоинт под Nginx Basic Auth и общим rate limit (5 запросов/мин на IP), так что
+расход ограничен.
 
 ### Пример
 
 ```bash
 curl -u student:password -X POST http://localhost/api/compare   -H "Content-Type: application/json"   -d '{
-    "message": "Напиши список продуктов для приготовления борща на 4 порции.",
+    "message": "Напиши список основных продуктов для приготовления борща на 4 порции.",
     "json_structure": {"products": [{"name": "Название продукта", "count": "Количество", "unit": "Единица измерения"}]},
-    "max_tokens": 800,
-    "stop_sequence": "END_OF_RESPONSE"
+    "max_tokens": 500,
+    "stop_sequence": null
   }'
 ```
 
@@ -170,18 +203,21 @@ curl -u student:password -X POST http://localhost/api/compare   -H "Content-Type
     "finish_reason": "stop",
     "settings": {
       "response_format": {"type": "json_object"},
-      "max_tokens": 800,
-      "stop": ["END_OF_RESPONSE"],
+      "max_tokens": 500,
+      "stop": null,
       "json_structure": {"products": [...]}
     }
   }
 }
 ```
 
-При сбое контролируемого запроса возвращается `controlled: null` + понятное
-`controlled_error`; запрошенные параметры (`response_format`, `max_tokens`,
-`stop`, `json_structure`) остаются видимыми в `settings`. Повторных платных
-вызовов не делается.
+### Журналирование
+
+Приложение пишет безопасные диагностические журналы (см. раздел «Логи»):
+метаданные без секретов и без полных запросов пользователя
+(`message_length=…`, `json_structure_size=…`, `response_format=json_object`,
+`max_tokens=…`, `stop_configured=false`, `finish_reason=…`,
+`content_is_none=…`).
 
 ## Environment variables
 
@@ -367,15 +403,15 @@ DeepSeek calls per request.
 ```bash
 curl -u student:password -X POST http://localhost/api/compare \
   -H "Content-Type: application/json" \
-  -d '{"message": "Напиши список продуктов для приготовления борща на 4 порции.", "json_structure": {"products": [{"name": "Название продукта", "count": "Количество", "unit": "Единица измерения"}]}, "max_tokens": 800, "stop_sequence": "END_OF_RESPONSE"}'
+  -d '{"message": "Напиши список основных продуктов для приготовления борща на 4 порции.", "json_structure": {"products": [{"name": "Название продукта", "count": "Количество", "unit": "Единица измерения"}]}, "max_tokens": 500, "stop_sequence": null}'
 ```
 
 Response: `{"unrestricted": {"answer": "...", "finish_reason": "stop"},
 "controlled": {"answer": "...", "finish_reason": "length", "settings":
-{"response_format": {"type": "json_object"}, "max_tokens": 800, "stop":
-["END_OF_RESPONSE"], "json_structure": {"products": [...]}}}}` (with
-`json_structure` replaced by the actual structure). See the section
-«Управление ответом модели» for details.
+{"response_format": {"type": "json_object"}, "max_tokens": 500, "stop":
+null, "json_structure": {"products": [...]}}}}` (with `json_structure`
+replaced by the actual structure). `stop` is null unless a sequence is
+supplied. See the section «Управление ответом модели» for details.
 
 Error status codes: `401` (bad API key / Basic Auth), `422` (invalid
 input — including a `json_structure` that is not a non-empty JSON object), `429` (rate
@@ -402,7 +438,40 @@ Error status codes: `401` (bad API key), `422` (invalid input),
 `504` (timeout). Error bodies always look like `{"detail": "..."}` and
 never contain secrets or stack traces.
 
+## Логи (персистентные журналы)
+
+Журналы пишутся на хост-диск (не внутрь контейнера), поэтому переживают
+пересоздание контейнеров. Каталог `logs/` игнорируется git.
+
+- Приложение: `logs/app.log` (ротация ~5 МБ × 3 файла)
+- Nginx access: `logs/nginx/access.log`
+- Nginx errors: `logs/nginx/error.log`
+- Проверка: `logs/verification.log`
+
+В контейнерах:
+- `./logs` смонтирован в `/app/logs` (приложение);
+- `./logs/nginx` смонтирован в `/var/log/nginx` (nginx).
+
+Просмотр в Windows PowerShell:
+
+```powershell
+Get-Content .\logs\app.log -Tail 100
+Get-Content .\logs\app.log -Wait
+```
+
+Через Docker:
+
+```bash
+docker compose logs --tail=100 app
+docker compose logs --tail=100 nginx
+docker compose logs -f app
+```
+
+В журналы не пишутся: API-ключ, пароли, Authorization-заголовки, полные запросы
+пользователя и полная JSON-структура — только безопасные метаданные.
+
 ## Input validation
+
 
 Messages are rejected with `422` when they are:
 

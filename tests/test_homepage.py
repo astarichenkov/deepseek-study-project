@@ -10,7 +10,7 @@ def test_homepage_renders(client):
     assert "DeepSeek API — управление ответом модели" in html
     assert "Один и тот же запрос с разным уровнем контроля ответа через API" in html
     # default borscht prompt is pre-filled
-    assert "Напиши список продуктов для приготовления борща на 4 порции." in html
+    assert "Напиши список основных продуктов для приготовления борща на 4 порции." in html
     assert "Настройки ответа с ограничениями" in html
     assert "Режим формата ответа" in html
     assert "Требуемая структура JSON-ответа" in html
