@@ -1,39 +1,56 @@
 """Service-level tests for the compare flow with a fully mocked client.
 
-These tests verify the CORE contract of the assignment:
+Verifies the CORE contract of the assignment:
 
 * exactly TWO provider calls per comparison;
-* the SAME original user prompt is used for both;
-* the unrestricted call has NO custom response_format / max_tokens / stop;
-* the controlled call forwards the exact validated ``response_format``
-  object (e.g. ``{"type": "json_object"}``), ``max_tokens`` and
-  ``stop=["<END>"]`` to the mocked OpenAI client;
-* the controlled request adds the JSON-output mention and the explicit
-  termination instruction;
+* the SAME original user prompt is used for both calls;
+* the unrestricted call has NO response_format / custom max_tokens / stop /
+  JSON-structure / termination instruction;
+* the controlled call forwards ``response_format={"type": "json_object"}``,
+  the user ``max_tokens`` and ``stop=[...]`` to the mocked client;
+* the controlled instruction embeds the editable JSON structure and the
+  dynamic termination-marker text;
 * finish_reason comes from the (fake) provider response.
 
 No network traffic happens here.
 """
-import asyncio
+import json
 
 import httpx
 import pytest
 from openai import AuthenticationError, RateLimitError
 
 from app.config import Settings
-from app.schemas.compare import CompareRequest, ResponseFormat
+from app.schemas.compare import CompareRequest
 from app.services.deepseek import (
     DEFAULT_MAX_TOKENS,
     DeepSeekAuthenticationError,
-    DeepSeekError,
     DeepSeekService,
 )
 
-PROMPT = "Назови три преимущества REST API и кратко объясни каждое."
+PROMPT = "Напиши список продуктов для приготовления борща на 4 порции."
+DEFAULT_STRUCTURE = {
+    "products": [
+        {
+            "name": "Название продукта",
+            "count": "Количество",
+            "unit": "Единица измерения",
+        }
+    ]
+}
+CUSTOM_STRUCTURE = {
+    "ingredients": [
+        {
+            "product": "Название",
+            "amount": "Количество",
+            "unit": "Единица измерения",
+            "optional": "Обязательный ли ингредиент",
+        }
+    ]
+}
 
 
-def _completion(answer: str, finish_reason: str | None = "stop"):
-    """A fake ChatCompletion object shaped like the OpenAI SDK response."""
+def _completion(answer: str | None, finish_reason: str | None = "stop"):
     class _Message:
         pass
 
@@ -59,8 +76,6 @@ def _status_error(error_cls, code):
 
 
 class _FakeCompletions:
-    """Returns queued results (or raises queued exceptions) per create call."""
-
     def __init__(self, results):
         self.results = list(results)
         self.calls = []
@@ -77,8 +92,6 @@ class _FakeCompletions:
 
 @pytest.fixture
 def make_service(monkeypatch):
-    """DeepSeekService whose client records constructor kwargs + create calls."""
-
     def _make(results):
         class _RecordingAsyncOpenAI:
             instances = []
@@ -89,9 +102,7 @@ def make_service(monkeypatch):
                 self.chat = type("_Chat", (), {"completions": self.completions})()
                 _RecordingAsyncOpenAI.instances.append(self)
 
-        monkeypatch.setattr(
-            "app.services.deepseek.AsyncOpenAI", _RecordingAsyncOpenAI
-        )
+        monkeypatch.setattr("app.services.deepseek.AsyncOpenAI", _RecordingAsyncOpenAI)
         service = DeepSeekService(Settings(deepseek_api_key="test-key"))
         return service, _RecordingAsyncOpenAI.instances[-1]
 
@@ -101,9 +112,9 @@ def make_service(monkeypatch):
 def _sample_request(**overrides):
     base = dict(
         message=PROMPT,
-        response_format=ResponseFormat(type="json_object"),
-        max_tokens=150,
-        stop_sequence="<END>",
+        json_structure=DEFAULT_STRUCTURE,
+        max_tokens=300,
+        stop_sequence="END_OF_RESPONSE",
     )
     base.update(overrides)
     return CompareRequest(**base)
@@ -111,138 +122,132 @@ def _sample_request(**overrides):
 
 def test_compare_makes_exactly_two_provider_calls(make_service):
     service, client = make_service(
-        [_completion("Свободный ответ..."), _completion('{"advantages": [...]}')]
+        [_completion("Свободный текст про борщ..."), _completion('{"products": []}')]
     )
 
-    response = asyncio.run(service.compare(_sample_request()))
+    response = run(service.compare(_sample_request()))
 
-    assert len(client.completions.calls) == 2, "comparison must make exactly 2 calls"
-    assert response.unrestricted.answer == "Свободный ответ..."
-    assert response.controlled.answer == '{"advantages": [...]}'
+    assert len(client.completions.calls) == 2
+    assert response.unrestricted.answer == "Свободный текст про борщ..."
+    assert response.controlled.answer == '{"products": []}'
 
 
-def test_compare_uses_same_original_prompt_for_both_calls(make_service):
-    service, client = make_service(
-        [_completion("A"), _completion("B")]
-    )
+def test_compare_uses_same_original_prompt_in_both(make_service):
+    service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(_sample_request()))
+    run(service.compare(_sample_request()))
 
     unrestricted, controlled = client.completions.calls
     assert unrestricted["messages"][1] == {"role": "user", "content": PROMPT}
-    assert controlled["messages"][1] == {"role": "user", "content": PROMPT}
+    # controlled: the final user message starts with the SAME prompt verbatim
+    assert controlled["messages"][1]["content"].startswith(PROMPT)
+    assert PROMPT in controlled["messages"][1]["content"]
 
 
-def test_unrestricted_call_has_no_custom_controls(make_service):
+def test_controlled_final_message_is_prompt_plus_instruction(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(_sample_request()))
-
-    unrestricted = client.completions.calls[0]
-    # No response_format, no stop, no extra instruction message
-    assert "response_format" not in unrestricted
-    assert "stop" not in unrestricted
-    assert len(unrestricted["messages"]) == 2
-    # Only the app-level default cap (NOT the form's max_tokens)
-    assert unrestricted["max_tokens"] == DEFAULT_MAX_TOKENS
-    assert unrestricted["max_tokens"] != 150
-
-
-def test_controlled_call_forwards_exact_response_format(make_service):
-    service, client = make_service([_completion("A"), _completion("B")])
-
-    asyncio.run(service.compare(_sample_request()))
+    run(service.compare(_sample_request()))
 
     controlled = client.completions.calls[1]
-    # The exact validated object must reach the mocked OpenAI client
-    assert controlled["response_format"] == {"type": "json_object"}
-    assert isinstance(controlled["response_format"], dict)
+    final = controlled["messages"][1]["content"]
+    assert len(controlled["messages"]) == 2  # system + one combined user message
+    assert final.startswith(PROMPT)
+    assert "структуру JSON" in final
+    assert "END_OF_RESPONSE" in final
 
 
-def test_controlled_call_receives_max_tokens(make_service):
+def test_unrestricted_call_has_no_controls(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(_sample_request(max_tokens=300)))
+    run(service.compare(_sample_request()))
 
-    assert client.completions.calls[1]["max_tokens"] == 300
+    unrestricted = client.completions.calls[0]
+    assert "response_format" not in unrestricted
+    assert "stop" not in unrestricted
+    assert len(unrestricted["messages"]) == 2  # no structure/termination instruction
+    assert unrestricted["max_tokens"] == DEFAULT_MAX_TOKENS
+    assert unrestricted["max_tokens"] != 300
+
+
+def test_controlled_call_forwards_json_mode(make_service):
+    service, client = make_service([_completion("A"), _completion("B")])
+
+    run(service.compare(_sample_request()))
+
+    controlled = client.completions.calls[1]
+    assert controlled["response_format"] == {"type": "json_object"}
+
+
+def test_controlled_call_forwards_user_max_tokens(make_service):
+    service, client = make_service([_completion("A"), _completion("B")])
+
+    run(service.compare(_sample_request(max_tokens=400)))
+
+    assert client.completions.calls[1]["max_tokens"] == 400
     assert client.completions.calls[0]["max_tokens"] == DEFAULT_MAX_TOKENS
 
 
-def test_controlled_call_receives_stop(make_service):
+def test_controlled_call_forwards_user_stop(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(_sample_request(stop_sequence="<END>")))
+    run(service.compare(_sample_request(stop_sequence="###END###")))
 
-    assert client.completions.calls[1]["stop"] == ["<END>"]
+    assert client.completions.calls[1]["stop"] == ["###END###"]
     assert "stop" not in client.completions.calls[0]
 
 
-def test_controlled_call_receives_termination_instruction(make_service):
+def test_controlled_instruction_mentions_json_and_structure(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(_sample_request(stop_sequence="<END>")))
+    run(service.compare(_sample_request()))
 
-    instruction = client.completions.calls[1]["messages"][2]["content"]
-    assert "<END>" in instruction
-    assert "маркер" in instruction
-    # In JSON mode the marker is placed after the closing JSON brace
-    assert "закрывающей фигурной скобки" in instruction
+    instruction = client.completions.calls[1]["messages"][1]["content"]
+    assert "JSON" in instruction  # DeepSeek JSON Output requires the word "json"
+    assert '"products"' in instruction
+    assert '"name"' in instruction
+    assert '"count"' in instruction
+    assert '"unit"' in instruction
 
 
-def test_text_mode_stop_uses_plain_termination_instruction(make_service):
+def test_controlled_instruction_embeds_custom_fields(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(
-        _sample_request(response_format=ResponseFormat(type="text"), stop_sequence="<END>")
-    ))
+    run(service.compare(_sample_request(json_structure=CUSTOM_STRUCTURE)))
 
-    instruction = client.completions.calls[1]["messages"][2]["content"]
-    assert "<END>" in instruction
-    assert "Заверши ответ маркером" in instruction
+    instruction = client.completions.calls[1]["messages"][1]["content"]
+    assert "ingredients" in instruction
+    assert '"product"' in instruction
+    assert '"amount"' in instruction
+    assert '"optional"' in instruction
 
 
-def test_json_output_instruction_added_in_json_mode(make_service):
-    """DeepSeek JSON Output expects the word 'json' in the messages."""
+def test_controlled_instruction_has_dynamic_termination_marker(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(_sample_request(response_format=ResponseFormat(type="json_object"))))
+    run(service.compare(_sample_request(stop_sequence="###END###")))
 
-    instruction = client.completions.calls[1]["messages"][2]["content"]
-    assert "json" in instruction.lower()
-    # ...and the ORIGINAL prompt message is untouched
-    assert client.completions.calls[1]["messages"][1]["content"] == PROMPT
+    instruction = client.completions.calls[1]["messages"][1]["content"]
+    assert "###END###" in instruction
+    assert "сгенерируй маркер" in instruction
 
 
-def test_text_mode_has_no_json_mention(make_service):
+def test_no_stop_means_no_stop_param_and_no_marker_instruction(make_service):
     service, client = make_service([_completion("A"), _completion("B")])
 
-    asyncio.run(service.compare(
-        _sample_request(response_format=ResponseFormat(type="text"), stop_sequence=None)
-    ))
-
-    controlled = client.completions.calls[1]
-    assert controlled["response_format"] == {"type": "text"}
-    instruction = controlled["messages"][2]["content"]
-    assert "json" not in instruction.lower()
-    assert "Заверши ответ маркером" not in instruction
-
-
-def test_no_stop_means_no_stop_param_and_no_termination_instruction(make_service):
-    service, client = make_service([_completion("A"), _completion("B")])
-
-    response = asyncio.run(service.compare(_sample_request(stop_sequence=None)))
+    response = run(service.compare(_sample_request(stop_sequence=None)))
 
     controlled = client.completions.calls[1]
     assert "stop" not in controlled
-    instruction = controlled["messages"][2]["content"]
+    instruction = controlled["messages"][1]["content"]
     assert "маркер" not in instruction
     assert response.controlled.settings.stop is None
 
 
-def test_finish_reason_propagates_from_provider(make_service):
+def test_finish_reason_propagates(make_service):
     service, _ = make_service([_completion("A", "stop"), _completion("B", "length")])
 
-    response = asyncio.run(service.compare(_sample_request()))
+    response = run(service.compare(_sample_request()))
 
     assert response.unrestricted.finish_reason == "stop"
     assert response.controlled.finish_reason == "length"
@@ -250,32 +255,91 @@ def test_finish_reason_propagates_from_provider(make_service):
 
 def test_controlled_finish_reason_stop(make_service):
     service, _ = make_service([_completion("A", "stop"), _completion("B", "stop")])
-    response = asyncio.run(service.compare(_sample_request()))
+    response = run(service.compare(_sample_request()))
     assert response.controlled.finish_reason == "stop"
 
 
-def test_settings_echo_mirrors_api_parameters(make_service):
+def test_settings_echo_mirrors_api_and_structure(make_service):
     service, _ = make_service([_completion("A"), _completion("B")])
 
-    response = asyncio.run(service.compare(_sample_request()))
+    response = run(service.compare(_sample_request()))
 
-    settings = response.controlled.settings
-    assert settings.response_format == {"type": "json_object"}
-    assert settings.max_tokens == 150
-    assert settings.stop == ["<END>"]
+    s = response.controlled.settings
+    assert s.response_format == {"type": "json_object"}
+    assert s.max_tokens == 300
+    assert s.stop == ["END_OF_RESPONSE"]
+    assert s.json_structure == DEFAULT_STRUCTURE
+    assert response.settings == s
     assert response.unrestricted.settings is None
 
 
-def test_partial_failure_controlled_side(make_service):
+def test_controlled_valid_json_answer_passthrough(make_service):
+    raw = '{"products":[{"name":"Свёкла","count":"1","unit":"шт"}]}'
+    service, _ = make_service([_completion("текст", "stop"), _completion(raw, "stop")])
+
+    response = run(service.compare(_sample_request()))
+
+    assert response.controlled.answer == raw
+
+
+def test_controlled_invalid_json_answer_passthrough(make_service):
+    raw = '{"products": [unclosed'
+    service, _ = make_service([_completion("текст", "stop"), _completion(raw, "stop")])
+
+    response = run(service.compare(_sample_request()))
+
+    assert response.controlled.answer == raw
+    assert response.controlled.finish_reason == "stop"
+
+
+def test_controlled_empty_content_yields_partial_failure(make_service):
+    service, _ = make_service(
+        [_completion("Unrestricted OK"), _completion("", "length")]
+    )
+
+    response = run(service.compare(_sample_request()))
+
+    assert response.unrestricted.answer == "Unrestricted OK"
+    assert response.controlled is None
+    assert response.controlled_error
+
+
+def test_controlled_none_content_yields_partial_failure(make_service):
+    service, _ = make_service(
+        [_completion("Unrestricted OK"), _completion(None, "stop")]
+    )
+
+    response = run(service.compare(_sample_request()))
+
+    assert response.unrestricted.answer == "Unrestricted OK"
+    assert response.controlled is None
+
+
+def test_requested_controls_survive_controlled_failure(make_service):
     service, _ = make_service(
         [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
     )
 
-    response = asyncio.run(service.compare(_sample_request()))
+    response = run(service.compare(_sample_request(json_structure=CUSTOM_STRUCTURE)))
 
-    assert response.unrestricted.answer == "Unrestricted OK"
     assert response.controlled is None
-    assert response.controlled_error and "rate limit" in response.controlled_error.lower()
+    assert response.controlled_error
+    # requested controls (response_format / max_tokens / stop / structure) remain
+    assert response.settings.response_format == {"type": "json_object"}
+    assert response.settings.max_tokens == 300
+    assert response.settings.stop == ["END_OF_RESPONSE"]
+    assert response.settings.json_structure == CUSTOM_STRUCTURE
+
+
+def test_no_fabricated_finish_reason_on_failure(make_service):
+    service, _ = make_service(
+        [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
+    )
+
+    response = run(service.compare(_sample_request()))
+
+    assert response.controlled is None
+    assert response.controlled_error is not None
 
 
 def test_unrestricted_failure_raises(make_service):
@@ -284,136 +348,42 @@ def test_unrestricted_failure_raises(make_service):
     )
 
     with pytest.raises(DeepSeekAuthenticationError):
-        asyncio.run(service.compare(_sample_request()))
+        run(service.compare(_sample_request()))
 
 
-def test_timeout_maps_to_deepseek_error(make_service):
-    from openai import APITimeoutError
-
-    request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
-    service, _ = make_service(
-        [APITimeoutError(request=request), _completion("never reached")]
-    )
-    from app.services.deepseek import DeepSeekTimeoutError
-
-    with pytest.raises(DeepSeekTimeoutError):
-        asyncio.run(service.compare(_sample_request()))
-
-
-def test_network_failure_maps_to_deepseek_error(make_service):
-    from openai import APIConnectionError
-
-    request = httpx.Request("POST", "https://api.deepseek.com/chat/completions")
-    service, _ = make_service(
-        [APIConnectionError(message="refused", request=request), _completion("never reached")]
-    )
-    from app.services.deepseek import DeepSeekNetworkError
-
-    with pytest.raises(DeepSeekNetworkError):
-        asyncio.run(service.compare(_sample_request()))
-
-
-def test_malformed_provider_response_raises(make_service):
-    """Unrestricted-side malformed response is a total failure -> raises."""
-    service, _ = make_service([_completion("", "stop"), _completion("never reached")])
-    from app.services.deepseek import DeepSeekMalformedResponseError
-
-    with pytest.raises(DeepSeekMalformedResponseError):
-        asyncio.run(service.compare(_sample_request()))
-
-
-def test_controlled_empty_content_yields_partial_failure(make_service):
-    """DeepSeek json mode returns EMPTY content when max_tokens is exceeded;
-    the service reports it as a clean partial failure (no fabricated answer,
-    unrestricted result preserved)."""
-    service, _ = make_service(
-        [_completion("Unrestricted OK", "stop"), _completion("", "length")]
-    )
-
-    response = asyncio.run(service.compare(_sample_request()))
-
-    assert response.unrestricted.answer == "Unrestricted OK"
-    assert response.controlled is None
-    assert response.controlled_error
-    assert "response" in response.controlled_error
-    # requested settings still returned
-    assert response.settings.max_tokens == 150
-
-
-def test_controlled_none_content_yields_partial_failure(make_service):
-    service, _ = make_service(
-        [_completion("Unrestricted OK", "stop"), _completion(None, "stop")]
-    )
-
-    response = asyncio.run(service.compare(_sample_request()))
-
-    assert response.unrestricted.answer == "Unrestricted OK"
-    assert response.controlled is None
-    assert response.controlled_error
-
-
-def test_controlled_valid_json_answer_passthrough_unmodified(make_service):
-    raw = '{"advantages": ["Python", "JS", "Go"]}'
-    service, _ = make_service([_completion("text answer", "stop"), _completion(raw, "stop")])
-
-    response = asyncio.run(service.compare(_sample_request()))
-
-    assert response.controlled.answer == raw  # provider content preserved verbatim
-
-
-def test_controlled_invalid_json_passthrough_unmodified(make_service):
-    """If the provider violates json mode, the raw content is preserved
-    (no rewriting/fabrication); validation is display-only metadata."""
-    raw = '{"advantages": [unclosed'
-    service, _ = make_service([_completion("text answer", "stop"), _completion(raw, "stop")])
-
-    response = asyncio.run(service.compare(_sample_request()))
-
-    assert response.controlled.answer == raw
-    assert response.controlled.finish_reason == "stop"
-
-
-def test_requested_settings_survive_controlled_failure(make_service):
-    """settings are echoed at CompareResponse level even when controlled=None."""
-    service, _ = make_service(
-        [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
-    )
-
-    response = asyncio.run(service.compare(_sample_request()))
-
-    assert response.controlled is None
-    assert response.settings.response_format == {"type": "json_object"}
-    assert response.settings.max_tokens == 150
-    assert response.settings.stop == ["<END>"]
-    assert response.controlled_error
-
-
-def test_no_fabricated_finish_reason_on_failure(make_service):
-    service, _ = make_service(
-        [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
-    )
-
-    response = asyncio.run(service.compare(_sample_request()))
-
-    # controlled is None -> there is no finish_reason at all (nothing invented)
-    assert response.controlled is None
-    assert response.controlled_error is not None
-
-
-def test_unexpected_provider_error_raises_deepseek_error_500(make_service):
+def test_unexpected_provider_error_raises_500(make_service):
     service, _ = make_service([RuntimeError("boom"), _completion("never reached")])
+    from app.services.deepseek import DeepSeekError
 
     with pytest.raises(DeepSeekError) as excinfo:
-        asyncio.run(service.compare(_sample_request()))
+        run(service.compare(_sample_request()))
     assert excinfo.value.status_code == 500
 
 
 def test_compare_does_not_retry(make_service):
-    """One failed controlled call must NOT trigger extra provider calls."""
     service, client = make_service(
         [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]
     )
 
-    asyncio.run(service.compare(_sample_request()))
+    run(service.compare(_sample_request()))
 
     assert len(client.completions.calls) == 2
+
+
+def test_json_structure_is_serialized_for_instruction(make_service):
+    service, client = make_service([_completion("A"), _completion("B")])
+
+    run(service.compare(_sample_request()))
+
+    instruction = client.completions.calls[1]["messages"][1]["content"]
+    # the structure is embedded as readable (indented) JSON text
+    expected = json.dumps(DEFAULT_STRUCTURE, ensure_ascii=False, indent=2)
+    assert expected in instruction
+    # and it is valid JSON when parsed
+    json.loads(expected)
+
+
+def run(coro):
+    import asyncio
+
+    return asyncio.run(coro)

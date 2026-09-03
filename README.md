@@ -99,107 +99,66 @@ Model: `deepseek-v4-flash`. Every request includes a system prompt
 
 ## Управление ответом модели (учебное задание)
 
-The homepage is an educational comparison tool. It demonstrates that
-**the same prompt produces different results depending on the level of
-response control applied through the API**:
+Образовательное сравнение: один и тот же запрос отправляется в DeepSeek
+дважды и показывает, как API-управление ответом меняет результат.
 
-- **Без ограничений (unrestricted)** — the original prompt is sent once
-  with only the application's normal system message and the app-level
-default token cap (`DEFAULT_MAX_TOKENS = 1024`). No custom
-`response_format`, no custom `max_tokens`, no `stop`, no extra
-instructions.
-- **С ограничениями (controlled)** — the SAME original prompt is sent a
-  second time with three REAL API controls applied:
-  1. **`response_format`** — editable JSON, e.g. `{"type": "json_object"}`,
-     forwarded verbatim to the API as the `response_format` parameter;
-  2. **`max_tokens`** — the API output-token limit for the request;
-  3. **`stop`** — a stop sequence (e.g. `<END>`), sent as `stop=[...]`.
+Запрос по умолчанию (можно редактировать):
 
-### Why the prompt is sent twice
+> Напиши список продуктов для приготовления борща на 4 порции.
 
-To isolate the effect of the controls, the user prompt must be **byte-for-
-byte identical** in both requests. The comparison never rewrites the
-original prompt. One click = one `POST /api/compare` = **exactly two**
-DeepSeek provider calls; the UI states this explicitly.
+- **Без ограничений** — оригинальный запрос + обычное системное сообщение и
+  стандартный лимит токенов (`DEFAULT_MAX_TOKENS = 1024`). Без
+  `response_format`, без `max_tokens` из формы, без `stop`, без инструкций.
+- **С ограничениями** — тот же самый запрос + реальные API-ограничения.
 
-### Actual DeepSeek `response_format` mechanism (verified)
+### Контролируемый запрос: реальные API-механизмы
 
-The project uses the OpenAI-compatible Chat Completions integration
-(openai SDK, `https://api.deepseek.com`). The SDK accepts the
-`response_format` parameter with `{"type": "json_object"}` (JSON Output),
-`{"type": "text"}` and OpenAI-only `json_schema`. DeepSeek documents
-JSON Output via `response_format={"type": "json_object"}`, therefore the
-application whitelists exactly:
+| Управление               | Механизм API                          | Что это                           |
+|--------------------------|---------------------------------------|-----------------------------------|
+| Режим формата            | `response_format={"type":"json_object"}` (фиксирован) | JSON Output — вывод обязан быть JSON-объектом |
+| Структура ответа         | инструкция в `messages` (поле `json_structure`) | описывает желаемые ключи (напр. products/name/count/unit) |
+| Максимальная длина       | `max_tokens`                          | лимит выходных токенов           |
+| Завершение               | `stop=[...]` + инструкция «сгенерируй маркер …» | стоп-маркер завершения генерации |
 
-```json
-{"type": "json_object"}
-{"type": "text"}
-```
+`response_format` — API-параметр уровня формата; структура JSON передаётся
+отдельной инструкцией в `messages` (это не API-параметр и не произвольные
+аргументы SDK). `json_structure` редактируется на лету, валидируется как
+непустой JSON-объект на клиенте и на бэкенде (HTTP 422 до вызова провайдера).
 
-`json_schema` and any other/extra keys are **rejected with HTTP 422 before
-any provider call** (Pydantic `Literal` + `extra="forbid"`), so arbitrary
-SDK arguments cannot be injected.
+`max_tokens` — API-лимит; модель может закончить раньше, при исчерпании
+лимита `finish_reason` станет `"length"`. `stop` — стоп-последовательность;
+сам маркер обычно не попадает в ответ. В контролируемый запрос динамически
+добавляется «После завершения JSON сгенерируй маркер END_OF_RESPONSE.».
 
-The controlled request forwards the validated JSON as the actual API
-parameter:
+### finish_reason
 
-```python
-client.chat.completions.create(
-    model="deepseek-v4-flash",
-    messages=...,
-    response_format={"type": "json_object"},
-    max_tokens=150,
-    stop=["<END>"],
-)
-```
+Показывается реальный `choices[0].finish_reason`: `stop` (штатно/по стоп-маркеру)
+или `length` (достигнут max_tokens). Не выдумывается.
 
-**DeepSeek JSON Output requirement:** when `response_format` is
-`json_object`, the word «json» must appear in the messages, so the
-controlled request receives an additional instruction message mentioning
-JSON (added ONLY to the controlled request; the original user prompt stays
-untouched). JSON Output is a real API parameter, NOT a prompt instruction.
+### Известное ограничение (проверено на реальном API)
 
-### Prompt instruction vs API generation parameters
+В режиме JSON Output (``response_format=json_object``) DeepSeek НЕ возвращает
+обрезанный JSON: если результат превысил бы ``max_tokens``, возвращается пустой
+контент с ``finish_reason="length"``. Кириллица токенизируется примерно как
+1 токен на символ, поэтому объёмный русский JSON (например, список продуктов
+борща) не умещается в 300 токенов. Поэтому рабочий пример по умолчанию использует
+``max_tokens=800``; при слишком малом лимите контролируемый запрос может вернуть
+пустой ответ — это реальное поведение API, а не подделка.
 
-| Control            | API mechanism                | What it really does                          |
-|--------------------|------------------------------|----------------------------------------------|
-| Формат ответа (JSON) | `response_format`           | API-level structured output (JSON Output)    |
-| Длина ответа       | `max_tokens`                 | Hard output-token limit during generation   |
-| Завершение         | `stop` (+ termination instruction in `messages`) | Stops generation when the model emits the sequence |
+### Стоимость
 
-Editable `response_format` JSON is validated in the browser with
-`JSON.parse()` BEFORE the request is sent (invalid JSON blocks the click
-and shows «Некорректный JSON: проверьте синтаксис.»), and again on the
-backend (HTTP 422 on malformed/unsupported configuration — zero provider
-calls). The «Параметры API» panel shows the live JSON that will be sent.
+Одно сравнение = один `POST /api/compare` = ровно **два** обращения к DeepSeek.
+UI показывает это. Эндпоинт под Nginx Basic Auth и тем же rate limit
+(5 запросов/мин на IP), так что расход ограничен.
 
-### `stop` semantics
-
-A `stop` sequence is **not guaranteed to be encountered** unless the model
-is instructed to produce it (or naturally does). The controlled request
-therefore also contains an explicit instruction: «Заверши ответ маркером
-<END>». The sequence is still sent as the real `stop=["<END>"]` API
-parameter. Nothing is faked — no frontend/backend string truncation.
-
-### `finish_reason`
-
-Each answer is displayed with the real `finish_reason` from
-`choices[0].finish_reason`:
-
-- `stop` — natural end of generation (or a stop sequence was hit);
-- `length` — the `max_tokens` limit was reached (answer may be cut off);
-- other values are passed through as returned by the provider.
-
-### Example
+### Пример
 
 ```bash
-curl -u student:password -X POST http://localhost/api/compare \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Назови три преимущества REST API.",
-    "response_format": {"type": "json_object"},
-    "max_tokens": 150,
-    "stop_sequence": "<END>"
+curl -u student:password -X POST http://localhost/api/compare   -H "Content-Type: application/json"   -d '{
+    "message": "Напиши список продуктов для приготовления борща на 4 порции.",
+    "json_structure": {"products": [{"name": "Название продукта", "count": "Количество", "unit": "Единица измерения"}]},
+    "max_tokens": 800,
+    "stop_sequence": "END_OF_RESPONSE"
   }'
 ```
 
@@ -207,20 +166,22 @@ curl -u student:password -X POST http://localhost/api/compare \
 {
   "unrestricted": {"answer": "...", "finish_reason": "stop"},
   "controlled": {
-    "answer": "{...}",
-    "finish_reason": "length",
+    "answer": "{\"products\": [...]}",
+    "finish_reason": "stop",
     "settings": {
       "response_format": {"type": "json_object"},
-      "max_tokens": 150,
-      "stop": ["<END>"]
+      "max_tokens": 800,
+      "stop": ["END_OF_RESPONSE"],
+      "json_structure": {"products": [...]}
     }
   }
 }
 ```
 
-If only the controlled request fails, the response contains
-`"controlled": null` plus a friendly `controlled_error` message; the
-unrestricted result is still returned (no retries, no extra API spend).
+При сбое контролируемого запроса возвращается `controlled: null` + понятное
+`controlled_error`; запрошенные параметры (`response_format`, `max_tokens`,
+`stop`, `json_structure`) остаются видимыми в `settings`. Повторных платных
+вызовов не делается.
 
 ## Environment variables
 
@@ -406,16 +367,18 @@ DeepSeek calls per request.
 ```bash
 curl -u student:password -X POST http://localhost/api/compare \
   -H "Content-Type: application/json" \
-  -d '{"message": "Назови три преимущества REST API.", "response_format": {"type": "json_object"}, "max_tokens": 150, "stop_sequence": "<END>"}'
+  -d '{"message": "Напиши список продуктов для приготовления борща на 4 порции.", "json_structure": {"products": [{"name": "Название продукта", "count": "Количество", "unit": "Единица измерения"}]}, "max_tokens": 800, "stop_sequence": "END_OF_RESPONSE"}'
 ```
 
 Response: `{"unrestricted": {"answer": "...", "finish_reason": "stop"},
 "controlled": {"answer": "...", "finish_reason": "length", "settings":
-{"response_format": {"type": "json_object"}, "max_tokens": 150, "stop":
-["<END>"]}}}`. See the section «Управление ответом модели» for details.
+{"response_format": {"type": "json_object"}, "max_tokens": 800, "stop":
+["END_OF_RESPONSE"], "json_structure": {"products": [...]}}}}` (with
+`json_structure` replaced by the actual structure). See the section
+«Управление ответом модели» for details.
 
 Error status codes: `401` (bad API key / Basic Auth), `422` (invalid
-input — including malformed/unsupported `response_format`), `429` (rate
+input — including a `json_structure` that is not a non-empty JSON object), `429` (rate
 limit), `500` (unexpected), `502` (network/provider), `504` (timeout).
 Error bodies look like `{"detail": "..."}` and never contain secrets or
 stack traces.

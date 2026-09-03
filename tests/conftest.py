@@ -14,6 +14,7 @@ from app.config import Settings, get_settings
 from app.main import create_app
 from app.schemas.chat import ChatResponse
 from app.schemas.compare import (
+    FIXED_RESPONSE_FORMAT,
     CompareRequest,
     CompareResponse,
     CompareResult,
@@ -50,9 +51,10 @@ class FakeDeepSeekService:
             return self.compare_result
         stop_list = [request.stop_sequence] if request.stop_sequence else None
         settings = ControlledSettings(
-            response_format=request.response_format.as_api_param(),
+            response_format=dict(FIXED_RESPONSE_FORMAT),
             max_tokens=request.max_tokens,
             stop=stop_list,
+            json_structure=request.json_structure,
         )
         return CompareResponse(
             unrestricted=CompareResult(
@@ -60,7 +62,7 @@ class FakeDeepSeekService:
             ),
             settings=settings,
             controlled=CompareResult(
-                answer="Controlled answer.",
+                answer='{"products": []}',
                 finish_reason="length",
                 settings=settings,
             ),

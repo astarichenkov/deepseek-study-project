@@ -21,15 +21,12 @@
         </div>
         <textarea
           id="message"
-          rows="4"
+          rows="3"
           maxlength="{{ max_message_length }}"
-          placeholder="Назови три преимущества REST API и кратко объясни каждое."
-          required
-        ></textarea>
+        >Напиши список продуктов для приготовления борща на 4 порции.</textarea>
         <p class="field-hint">
-          Этот запрос будет отправлен в DeepSeek дважды: один раз без
-          ограничений и один раз с настройками ниже. Текст запроса в обоих
-          случаях будет одинаковым.
+          Этот текст отправляется в DeepSeek дважды и в обоих случаях
+          остаётся одинаковым.
         </p>
       </div>
 
@@ -37,122 +34,150 @@
       <section class="controls-panel" aria-labelledby="controls-heading">
         <h2 id="controls-heading">Настройки ответа с ограничениями</h2>
 
+        <!-- A. Response format (fixed) -->
         <div class="field">
           <div class="field-label-row">
-            <label for="response-format">Формат ответа (JSON)</label>
+            <label for="response-format">Режим формата ответа</label>
             <button type="button" class="info-btn" id="info-format"
-                    aria-label="Подробнее о настройке «Формат ответа (JSON)»"
+                    aria-label="Подробнее о режиме формата ответа"
                     aria-expanded="false" aria-controls="tip-format">ⓘ</button>
-            <button type="button" class="link-btn" id="reset-json">Сбросить JSON</button>
           </div>
-          <textarea
-            id="response-format"
-            class="json-editor"
-            rows="5"
-            spellcheck="false"
-            aria-describedby="tip-format"
-          >{
+          <pre id="response-format" class="api-preview readonly-preview">{
   "type": "json_object"
-}</textarea>
-          <p class="field-hint" id="json-hint">
-            Это реальная API-конфигурация: она передаётся в DeepSeek как
-            параметр <code>response_format</code>, а не как текстовая инструкция.
-          </p>
+}</pre>
+          <p class="field-hint">Фиксировано для контролируемого запроса.</p>
           <div class="tooltip" id="tip-format" role="tooltip">
-            <strong>Что делает:</strong> включает механизм управления форматом
-            ответа на уровне API — структурированный вывод (JSON Output).<br>
-            <strong>Механизм API:</strong> содержимое редактора передаётся
-            НЕПОСРЕДСТВЕННО в DeepSeek API как параметр
-            <code>response_format</code>. Фрагмент реального вызова:<br>
-            <code>client.chat.completions.create(..., response_format={"type":
-            "json_object"})</code><br>
-            <strong>Типы:</strong> <code>{"type": "json_object"}</code> — модель
-            направляется на выдачу валидного JSON-объекта;
-            <code>{"type": "text"}</code> — обычный текст.<br>
-            <strong>Важно про DeepSeek:</strong> при включённом JSON Output в
-            сообщениях должен встречаться фрагмент со словом «json» — поэтому в
-            контролируемый запрос добавляется отдельное сообщение с таким
-            упоминанием (только в контролируемый запрос, ваш исходный запрос
-            не меняется).<br>
-            <strong>Отличие от инструкции:</strong> «ответь JSON» в тексте
-            запроса — это лишь пожелание модели; <code>response_format</code> —
-            это API-параметр генерации.<br>
-            <strong>Ограничения:</strong> поддерживаются только
-            <code>json_object</code> и <code>text</code>; неизвестные типы и
-            лишние поля отклоняются (HTTP 422) <em>до</em> платного вызова API.
-            Некорректный JSON в редакторе блокируется на странице до отправки.
+            <strong>Что делает:</strong> это реальный API-параметр
+            <code>response_format</code>, который передаётся в DeepSeek и
+            включает режим JSON-объекта (JSON Output).<br>
+            <strong>Механизм API:</strong>
+            <code>response_format={"type": "json_object"}</code>.<br>
+            <strong>Важно:</strong> этот параметр сам по себе <em>не</em>
+            задаёт поля вроде name/count/unit. Поля определяются отдельно —
+            через «Требуемую структуру JSON-ответа», которая передаётся как
+            инструкция в messages.<br>
+            <strong>Требование DeepSeek:</strong> в messages должно
+            встречаться слово «json» — наша инструкция это обеспечивает.
           </div>
         </div>
 
+        <!-- B. Editable JSON structure -->
+        <div class="field">
+          <div class="field-label-row">
+            <label for="json-structure">Требуемая структура JSON-ответа</label>
+            <button type="button" class="info-btn" id="info-structure"
+                    aria-label="Подробнее о структуре JSON-ответа"
+                    aria-expanded="false" aria-controls="tip-structure">ⓘ</button>
+            <button type="button" class="link-btn" id="reset-json">Сбросить JSON</button>
+          </div>
+          <textarea
+            id="json-structure"
+            class="json-editor"
+            rows="10"
+            spellcheck="false"
+            aria-describedby="tip-structure"
+          >{
+  "products": [
+    {
+      "name": "Название продукта",
+      "count": "Количество",
+      "unit": "Единица измерения"
+    }
+  ]
+}</textarea>
+          <div class="tooltip" id="tip-structure" role="tooltip">
+            <strong>Что делает:</strong> задаёт желаемую структуру (поля)
+            JSON-ответа. Меняйте её на лету, например
+            <code>products</code> → <code>ingredients</code> или добавляйте
+            поля.<br>
+            <strong>Механизм:</strong> это <em>инструкция в messages</em>, а
+            не API-параметр. Само «принуждение» к JSON выполняет
+            <code>response_format</code>; структура лишь описывает, какие
+            ключи ждать.<br>
+            <strong>Эффект:</strong> модель наполняет переданную структуру
+            реальными данными из запроса.<br>
+            <strong>Ограничения:</strong> корень должен быть JSON-объектом,
+            не пустым. Некорректный JSON отклоняется до платного вызова API.
+          </div>
+        </div>
+
+        <!-- C. Max tokens -->
         <div class="field">
           <div class="field-label-row">
             <label for="max-tokens">Максимальная длина ответа</label>
             <button type="button" class="info-btn" id="info-max-tokens"
-                    aria-label="Подробнее о настройке «Максимальная длина ответа»"
+                    aria-label="Подробнее о максимальной длине ответа"
                     aria-expanded="false" aria-controls="tip-max-tokens">ⓘ</button>
           </div>
           <div class="input-with-unit">
-            <input type="number" id="max-tokens" min="16" max="2000" step="1" value="150"
+            <input type="number" id="max-tokens" min="16" max="2000" step="1" value="800"
                    aria-describedby="tip-max-tokens">
             <span class="unit">токенов</span>
           </div>
           <div class="tooltip" id="tip-max-tokens" role="tooltip">
             <strong>Что делает:</strong> ограничивает число токенов, которые
-            модель может сгенерировать в ответе.<br>
-            <strong>Механизм API:</strong> значение передаётся в DeepSeek API
-            как параметр <code>max_tokens</code> — например
-            <code>max_tokens=150</code>.<br>
-            <strong>Эффект:</strong> ограничение действует на саму генерацию на
-            стороне API, а не на отображение в браузере. Модель может закончить
-            и раньше лимита.<br>
-            <strong>Важно:</strong> токен — не буква и не слово. Если лимит
-            достигнут, ответ может оборваться до смыслового завершения — об
-            этом сообщит <code>finish_reason: "length"</code>.
+            модель может сгенерировать.<br>
+            <strong>Механизм API:</strong> передаётся как параметр
+            <code>max_tokens</code>, например <code>max_tokens=300</code>.<br>
+            <strong>Важно:</strong> токен — не буква и не слово. Модель может
+            закончить и раньше. Если лимит исчерпан, <code>finish_reason</code>
+            может стать <code>"length"</code>, а ответ оборваться.<br>
+            <strong>Это управление генерацией</strong> на стороне API, а не
+            визуальная обрезка текста.
           </div>
         </div>
 
+        <!-- D. Stop sequence -->
         <div class="field">
           <div class="field-label-row">
             <label for="stop-sequence">Условие завершения (stop sequence)</label>
             <button type="button" class="info-btn" id="info-stop"
-                    aria-label="Подробнее о настройке «Условие завершения»"
+                    aria-label="Подробнее об условии завершения"
                     aria-expanded="false" aria-controls="tip-stop">ⓘ</button>
           </div>
-          <input type="text" id="stop-sequence" maxlength="50" value="&lt;END&gt;"
-                 placeholder="&lt;END&gt;" aria-describedby="tip-stop">
+          <input type="text" id="stop-sequence" maxlength="50" value="END_OF_RESPONSE"
+                 aria-describedby="tip-stop">
           <div class="tooltip" id="tip-stop" role="tooltip">
-            <strong>Что делает:</strong> стоп-последовательность — строка, при
-            появлении которой генерация останавливается.<br>
-            <strong>Механизм API:</strong> передаётся в DeepSeek API как
-            параметр <code>stop</code> — например
-            <code>stop=["&lt;END&gt;"]</code>.<br>
-            <strong>Эффект:</strong> генерация прекращается, как только модель
-            начинает выдавать эту строку; сама строка обычно НЕ включается в
-            возвращаемый ответ.<br>
-            <strong>Важно:</strong> просто настроить stop недостаточно — модель
-            должна иметь причину выдать маркер. Поэтому в контролируемый запрос
-            добавляется явная инструкция: «Заверши ответ маркером &lt;END&gt;».
-            Это управление генерацией через API, а не обрезка текста на
-            фронтенде.
+            <strong>Что делает:</strong> стоп-последовательность — маркер,
+            при появлении которого генерация прекращается.<br>
+            <strong>Механизм API:</strong> передаётся как параметр
+            <code>stop</code>, например
+            <code>stop=["END_OF_RESPONSE"]</code>.<br>
+            <strong>Эффект:</strong> достигнув маркера, API останавливает
+            вывод; сам маркер обычно <em>не попадает</em> в ответ.<br>
+            <strong>Отличие от max_tokens:</strong>
+            <code>max_tokens</code> — «не больше N токенов»;
+            <code>stop</code> — «заверши генерацию при появлении маркера».<br>
+            <strong>Образовательная оговорка:</strong> для обычного JSON вывода
+            стоп-маркер в реальной разработке часто не нужен; здесь он
+            показан намеренно, чтобы продемонстрировать управление
+            завершением через API. Модель должна «решить» выдать маркер —
+            поэтому в инструкцию добавляется «После завершения JSON сгенерируй
+            маркер …».
           </div>
         </div>
       </section>
 
-      <!-- 3. LIVE API SETTINGS PREVIEW -->
+      <!-- 3. LIVE PREVIEW -->
       <section class="preview-panel" aria-labelledby="preview-heading">
-        <h2 id="preview-heading">Параметры API</h2>
+        <h2 id="preview-heading">Параметры контролируемого API-запроса</h2>
         <pre id="api-preview" class="api-preview" aria-live="polite">{
   "response_format": {
     "type": "json_object"
   },
-  "max_tokens": 150,
+  "max_tokens": 800,
   "stop": [
-    "&lt;END&gt;"
+    "END_OF_RESPONSE"
   ]
 }</pre>
         <p class="field-hint">
-          Эти параметры будут применены только к ответу «С ограничениями».
-          Здесь нет ключей API, заголовков авторизации и переменных окружения.
+          response_format = API-уровень JSON-режима · max_tokens = лимит длины ·
+          stop = маркер завершения.
+        </p>
+        <h3 class="applied-heading" id="structure-heading">Инструкция по структуре JSON</h3>
+        <pre id="structure-instruction" class="api-preview"></pre>
+        <p class="field-hint">
+          Это инструкция, передаваемая в messages контролируемого запроса.
         </p>
       </section>
 
@@ -163,7 +188,7 @@
           Запросы к DeepSeek выполняются…
         </span>
       </div>
-      <p class="cost-note">Сравнение выполняет 2 запроса к DeepSeek API.</p>
+      <p class="cost-note">Одно сравнение выполняет 2 запроса к DeepSeek API.</p>
       <p id="error" class="error hidden" role="alert"></p>
     </form>
 
@@ -179,15 +204,12 @@
                   aria-label="Подробнее о finish_reason"
                   aria-expanded="false" aria-controls="tip-finish-unrestricted">ⓘ</button>
           <div class="tooltip tooltip--above" id="tip-finish-unrestricted" role="tooltip">
-            <strong>finish_reason</strong> возвращается DeepSeek API вместе с
-            ответом и объясняет, почему генерация завершилась:<br>
-            • <code>stop</code> — модель дошла до естественного конца (или
-            сработала стоп-последовательность);<br>
-            • <code>length</code> — достигнут лимит <code>max_tokens</code>;
-            ответ может быть оборван;<br>
-            • возможны и другие значения в зависимости от провайдера.<br>
-            Значение берётся из реального ответа API и не выдумывается
-            приложением.
+            <strong>finish_reason</strong> возвращается DeepSeek API:<br>
+            • <code>stop</code> — генерация завершилась штатно (или сработал
+            стоп-маркер);<br>
+            • <code>length</code> — достигнут лимит <code>max_tokens</code>;<br>
+            • возможны и другие значения провайдера.<br>
+            Значение берётся из реального ответа API.
           </div>
         </div>
       </article>
@@ -195,9 +217,10 @@
       <article class="card card-controlled" id="card-controlled">
         <h2>С ограничениями</h2>
         <div class="answer" id="answer-controlled"></div>
-        <p class="no-controls-note hidden" id="controlled-note"></p>
         <h3 class="applied-heading" id="applied-heading">Применённые API-параметры</h3>
         <pre id="applied-settings" class="api-preview"></pre>
+        <h3 class="applied-heading">JSON-структура</h3>
+        <pre id="structure-used" class="api-preview"></pre>
         <p id="controlled-error" class="error hidden"></p>
         <div class="finish-row">
           <span>Причина завершения: <code id="finish-controlled">—</code></span>
@@ -205,15 +228,12 @@
                   aria-label="Подробнее о finish_reason"
                   aria-expanded="false" aria-controls="tip-finish-controlled">ⓘ</button>
           <div class="tooltip tooltip--above" id="tip-finish-controlled" role="tooltip">
-            <strong>finish_reason</strong> возвращается DeepSeek API вместе с
-            ответом и объясняет, почему генерация завершилась:<br>
-            • <code>stop</code> — модель дошла до естественного конца (или
-            сработала стоп-последовательность);<br>
-            • <code>length</code> — достигнут лимит <code>max_tokens</code>;
-            ответ может быть оборван;<br>
-            • возможны и другие значения в зависимости от провайдера.<br>
-            Значение берётся из реального ответа API и не выдумывается
-            приложением.
+            <strong>finish_reason</strong> возвращается DeepSeek API:<br>
+            • <code>stop</code> — генерация завершилась штатно (или сработал
+            стоп-маркер);<br>
+            • <code>length</code> — достигнут лимит <code>max_tokens</code>;<br>
+            • возможны и другие значения провайдера.<br>
+            Значение берётся из реального ответа API.
           </div>
         </div>
       </article>

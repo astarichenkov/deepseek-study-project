@@ -1,21 +1,33 @@
 """API-level tests for POST /api/compare (provider calls fully mocked).
 
-Focus: request validation (incl. response_format whitelisting), HTTP
-mapping and the response contract. The "exactly two provider calls with
-the right parameters" behaviour is tested at the service level in
-test_compare_service.py.
+Focus: request validation (incl. json_structure as a JSON object), HTTP
+mapping and the response contract.
 """
 import pytest
 
-from app.schemas.compare import CompareResponse, CompareResult, ControlledSettings
+from app.schemas.compare import (
+    DEFAULT_JSON_STRUCTURE,
+    CompareResponse,
+    CompareResult,
+    ControlledSettings,
+)
 from app.services.deepseek import DeepSeekAuthenticationError
 
 VALID_PAYLOAD = {
-    "message": "Назови три преимущества REST API.",
-    "response_format": {"type": "json_object"},
-    "max_tokens": 150,
-    "stop_sequence": "<END>",
+    "message": "Напиши список продуктов для приготовления борща на 4 порции.",
+    "json_structure": DEFAULT_JSON_STRUCTURE,
+    "max_tokens": 300,
+    "stop_sequence": "END_OF_RESPONSE",
 }
+
+
+def test_default_borscht_comparison_request(client):
+    """Only message sent -> defaults applied (json_structure, max_tokens)."""
+    response = client.post("/api/compare", json={"message": VALID_PAYLOAD["message"]})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["settings"]["json_structure"] == DEFAULT_JSON_STRUCTURE
+    assert body["settings"]["max_tokens"] == 800
 
 
 def test_compare_success(client, fake_service):
@@ -23,79 +35,82 @@ def test_compare_success(client, fake_service):
     assert response.status_code == 200
     body = response.json()
     assert body["unrestricted"]["answer"] == "Unrestricted answer."
-    assert body["controlled"]["answer"] == "Controlled answer."
     assert body["unrestricted"]["finish_reason"] == "stop"
+    assert body["controlled"]["answer"] == '{"products": []}'
     assert body["controlled"]["finish_reason"] == "length"
-    # Applied API parameters echoed on the controlled side AND at top level
-    settings = body["controlled"]["settings"]
-    assert settings["response_format"] == {"type": "json_object"}
-    assert settings["max_tokens"] == 150
-    assert settings["stop"] == ["<END>"]
-    assert body["settings"] == settings
-    assert body["unrestricted"]["settings"] is None
+    # Controlled settings echo on controlled + top level
+    assert body["controlled"]["settings"]["response_format"] == {"type": "json_object"}
+    assert body["controlled"]["settings"]["max_tokens"] == 300
+    assert body["controlled"]["settings"]["stop"] == ["END_OF_RESPONSE"]
+    assert body["controlled"]["settings"]["json_structure"] == DEFAULT_JSON_STRUCTURE
+    assert body["settings"] == body["controlled"]["settings"]
     assert body["controlled_error"] is None
-    # Backend received exactly the validated request
+    # backend received the validated request
     assert len(fake_service.compare_calls) == 1
     req = fake_service.compare_calls[0]
     assert req.message == VALID_PAYLOAD["message"]
-    assert req.response_format.as_api_param() == {"type": "json_object"}
-    assert req.max_tokens == 150
-    assert req.stop_sequence == "<END>"
+    assert req.json_structure == DEFAULT_JSON_STRUCTURE
+    assert req.max_tokens == 300
+    assert req.stop_sequence == "END_OF_RESPONSE"
 
 
-def test_compare_defaults_when_fields_missing(client):
-    payload = {"message": "Назови три преимущества REST API."}
+def test_extra_response_format_is_ignored(client):
+    """response_format is fixed server-side; a client-supplied one is ignored."""
+    payload = {**VALID_PAYLOAD, "response_format": {"type": "text"}}
     response = client.post("/api/compare", json=payload)
     assert response.status_code == 200
-    settings = response.json()["controlled"]["settings"]
-    assert settings["response_format"] == {"type": "json_object"}
-    assert settings["max_tokens"] == 150
-    assert settings["stop"] is None
+    assert response.json()["settings"]["response_format"] == {"type": "json_object"}
+
+
+def test_custom_json_fields_accepted(client):
+    custom = {
+        "ingredients": [
+            {
+                "product": "Название",
+                "amount": "Количество",
+                "unit": "Единица измерения",
+                "optional": "Обязательный ли ингредиент",
+            }
+        ]
+    }
+    payload = {**VALID_PAYLOAD, "json_structure": custom}
+    response = client.post("/api/compare", json=payload)
+    assert response.status_code == 200
+    assert response.json()["settings"]["json_structure"] == custom
 
 
 # ---------------------------------------------------------------------------
-# response_format validation
+# Validation (all 422 before any service call)
 # ---------------------------------------------------------------------------
-def test_response_format_accepts_text(client):
-    payload = {**VALID_PAYLOAD, "response_format": {"type": "text"}}
-    assert client.post("/api/compare", json=payload).status_code == 200
+@pytest.mark.parametrize(
+    "message", ["", "   ", "\t\n", "a" * 4001, 12345]
+)
+def test_compare_message_validation(client, message):
+    assert client.post("/api/compare", json={**VALID_PAYLOAD, "message": message}).status_code == 422
 
 
 @pytest.mark.parametrize(
-    "response_format",
+    "json_structure",
     [
-        {"type": "json_schema"},          # OpenAI-only, not supported here
-        {"type": "xml"},                  # unsupported type
-        {"type": "json_object", "extra": 1},  # arbitrary SDK args rejected
-        {"type": 123},
-        "json_object",                    # must be an object
-        42,
-        [{"type": "json_object"}],
-        {},
+        [],                     # array, not object
+        "products",             # string
+        42,                     # scalar
+        [{"a": 1}],             # array of objects
+        {},                     # empty object
     ],
 )
-def test_response_format_invalid_rejected(client, response_format):
-    payload = {**VALID_PAYLOAD, "response_format": response_format}
+def test_compare_json_structure_must_be_non_empty_object(client, json_structure):
+    payload = {**VALID_PAYLOAD, "json_structure": json_structure}
     assert client.post("/api/compare", json=payload).status_code == 422
 
 
-# ---------------------------------------------------------------------------
-# Other field validation
-# ---------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {**VALID_PAYLOAD, "message": ""},
-        {**VALID_PAYLOAD, "message": "   "},
-        {**VALID_PAYLOAD, "message": "a" * 4001},
-        {**VALID_PAYLOAD, "message": 12345},
-    ],
-)
-def test_compare_message_validation(client, payload):
+def test_compare_message_missing_rejected(client):
+    payload = dict(VALID_PAYLOAD)
+    payload.pop("message")
     assert client.post("/api/compare", json=payload).status_code == 422
 
 
-@pytest.mark.parametrize("max_tokens", [15, 2001, 0, -5, "abc", 1.5, None])
+@pytest.mark.parametrize("max_tokens", [15, 2001, 0, -5, "abc", 1.5])
 def test_compare_max_tokens_validation(client, max_tokens):
     payload = {**VALID_PAYLOAD, "max_tokens": max_tokens}
     assert client.post("/api/compare", json=payload).status_code == 422
@@ -110,13 +125,13 @@ def test_compare_whitespace_stop_sequence_becomes_none(client):
     payload = {**VALID_PAYLOAD, "stop_sequence": "   "}
     response = client.post("/api/compare", json=payload)
     assert response.status_code == 200
-    assert response.json()["controlled"]["settings"]["stop"] is None
+    assert response.json()["settings"]["stop"] is None
 
 
 def test_validation_failure_causes_zero_service_calls(client, fake_service):
-    """Invalid payloads must be rejected before any service/provider call."""
     bad_payloads = [
-        {**VALID_PAYLOAD, "response_format": {"type": "json_schema"}},
+        {**VALID_PAYLOAD, "json_structure": []},
+        {**VALID_PAYLOAD, "json_structure": {}},
         {**VALID_PAYLOAD, "max_tokens": 5},
         {**VALID_PAYLOAD, "message": ""},
     ]
@@ -135,29 +150,29 @@ def test_compare_provider_failure_maps_to_http(client, fake_service):
     assert "detail" in response.json()
 
 
-def test_compare_partial_failure_returns_200_with_controlled_error(client, fake_service):
+def test_compare_partial_failure_keeps_requested_controls(client, fake_service):
     fake_service.compare_result = CompareResponse(
         unrestricted=CompareResult(answer="Unrestricted answer.", finish_reason="stop"),
         settings=ControlledSettings(
             response_format={"type": "json_object"},
-            max_tokens=150,
-            stop=["<END>"],
+            max_tokens=300,
+            stop=["END_OF_RESPONSE"],
+            json_structure=DEFAULT_JSON_STRUCTURE,
         ),
         controlled=None,
-        controlled_error="DeepSeek rate limit exceeded. Please wait a moment and try again.",
+        controlled_error="DeepSeek returned an unexpected response. Please try again.",
     )
     response = client.post("/api/compare", json=VALID_PAYLOAD)
     assert response.status_code == 200
     body = response.json()
     assert body["unrestricted"]["answer"] == "Unrestricted answer."
     assert body["controlled"] is None
-    assert "rate limit" in body["controlled_error"]
-    # Requested/applied parameters must survive a controlled failure
+    assert "unexpected response" in body["controlled_error"]
+    # requested controls visible on failure
     assert body["settings"]["response_format"] == {"type": "json_object"}
-    assert body["settings"]["max_tokens"] == 150
-    assert body["settings"]["stop"] == ["<END>"]
-    # No fabricated finish_reason on the failed side
-    assert "finish_reason" not in (body["controlled"] or {})
+    assert body["settings"]["max_tokens"] == 300
+    assert body["settings"]["stop"] == ["END_OF_RESPONSE"]
+    assert body["settings"]["json_structure"] == DEFAULT_JSON_STRUCTURE
 
 
 def test_compare_unexpected_error_returns_generic_500(client, fake_service):

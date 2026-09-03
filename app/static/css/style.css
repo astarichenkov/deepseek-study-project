@@ -224,6 +224,15 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   border-color: var(--error-border);
 }
 
+.readonly-preview {
+  background: var(--panel);
+  border-style: dashed;
+  max-height: 140px;
+  margin-top: 0;
+}
+
+#structure-instruction { min-height: 90px; }
+
 /* ---------------- Actions ---------------- */
 .actions {
   display: flex;
