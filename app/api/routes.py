@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import Settings, get_settings
 from app.schemas.chat import ChatRequest, ChatResponse, ErrorResponse
 from app.schemas.compare import CompareRequest, CompareResponse
+from app.schemas.reasoning import ReasoningRequest, ReasoningResponse
 from app.services.deepseek import DeepSeekError, DeepSeekService
 
 router = APIRouter()
@@ -87,5 +88,23 @@ async def compare(
     """
     try:
         return await service.compare(payload)
+    except DeepSeekError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.post(
+    "/api/reasoning",
+    response_model=ReasoningResponse,
+    responses=_PROVIDER_ERROR_RESPONSES,
+)
+async def reasoning(
+    payload: ReasoningRequest,
+    service: DeepSeekService = Depends(get_deepseek_service),
+) -> ReasoningResponse:
+    """Run ONE Day-3 reasoning strategy (no JSON mode). One request = one
+    provider call (except Method 3, whose two stages are separate requests).
+    """
+    try:
+        return await service.reasoning(payload)
     except DeepSeekError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

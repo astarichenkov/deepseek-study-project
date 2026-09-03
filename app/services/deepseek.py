@@ -36,6 +36,9 @@ from app.schemas.compare import (
 
 logger = logging.getLogger("app.services.deepseek")
 
+from app.schemas.reasoning import ReasoningRequest, ReasoningResponse  # noqa: E402
+from app.services.grading import grade_task  # noqa: E402
+
 # Application-level default output-token cap used by /api/chat and by the
 # UNRESTRICTED side of a comparison. It keeps normal responses bounded and
 # is independent of the student-configurable max_tokens of the controlled
@@ -316,26 +319,191 @@ class DeepSeekService:
         ]
         return "\n\n".join(parts)
 
-    async def _complete(
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Day 3 — reasoning strategies (one provider call per strategy request;
+    # the generate/use two-stage workflow is driven as two separate requests)
+    # ------------------------------------------------------------------
+    async def reasoning(self, request: ReasoningRequest) -> ReasoningResponse:
+        method = request.method
+        logger.info(
+            "reasoning %s started task_length=%s max_tokens=%s stop_configured=%s",
+            method,
+            len(request.task),
+            request.max_tokens,
+            bool(request.stop_sequence),
+        )
+        try:
+            if method == "direct":
+                result = await self._reason_direct(request)
+            elif method == "step_by_step":
+                result = await self._reason_step_by_step(request)
+            elif method == "generate_prompt":
+                result = await self._reason_generate_prompt(request)
+            elif method == "use_prompt":
+                result = await self._reason_use_prompt(request)
+            elif method == "experts":
+                result = await self._reason_experts(request)
+            else:  # pragma: no cover - guarded by Literal schema
+                raise ValueError(f"unknown method: {method}")
+        except DeepSeekError:
+            logger.warning("reasoning %s failed", method)
+            raise
+        logger.info(
+            "reasoning %s completed finish_reason=%s content_length=%s",
+            method,
+            result.finish_reason,
+            len(result.solution or result.generated_prompt or ""),
+        )
+        return result
+
+    async def _call_plain(self, content: str, max_tokens: int, stop: str | None):
+        """One plain-text (no json mode) provider call returning provider fields."""
+        return await self._call(
+            [{"role": "user", "content": content}],
+            max_tokens=max_tokens,
+            stop=stop,
+        )
+
+    async def _reason_direct(self, request: ReasoningRequest) -> ReasoningResponse:
+        prompt_sent = request.task.strip()
+        answer, finish, usage = await self._call_plain(
+            prompt_sent, request.max_tokens, request.stop_sequence
+        )
+        return ReasoningResponse(
+            method="direct",
+            kind="solution",
+            prompt_sent=prompt_sent,
+            solution=answer,
+            finish_reason=finish,
+            usage=usage,
+            status=grade_task(request.task, answer),
+        )
+
+    async def _reason_step_by_step(self, request: ReasoningRequest) -> ReasoningResponse:
+        task = request.task.strip()
+        prompt_sent = (
+            "Решай задачу пошагово.\n"
+            "Последовательно проверь условия задачи.\n"
+            "В конце отдельно укажи итоговый ответ.\n\n"
+            f"Задача:\n{task}"
+        )
+        answer, finish, usage = await self._call_plain(
+            prompt_sent, request.max_tokens, request.stop_sequence
+        )
+        return ReasoningResponse(
+            method="step_by_step",
+            kind="solution",
+            prompt_sent=prompt_sent,
+            solution=answer,
+            finish_reason=finish,
+            usage=usage,
+            status=grade_task(request.task, answer),
+        )
+
+    async def _reason_generate_prompt(self, request: ReasoningRequest) -> ReasoningResponse:
+        task = request.task.strip()
+        prompt_sent = (
+            "Составь эффективный промпт для решения следующей логической задачи.\n\n"
+            "Промпт должен помочь другой модели:\n"
+            "- внимательно проанализировать все условия;\n"
+            "- получить максимально точное решение;\n"
+            "- проверить решение на соответствие каждому условию;\n"
+            "- в конце дать однозначный итоговый ответ.\n\n"
+            "Не решай саму задачу.\n"
+            "Верни только готовый промпт, который следует передать другой модели.\n\n"
+            "Важно: готовый промпт должен быть самодостаточным и содержать текст "
+            "исходной задачи полностью.\n\n"
+            f"Исходная задача:\n\n{task}"
+        )
+        answer, finish, usage = await self._call_plain(
+            prompt_sent, request.max_tokens, request.stop_sequence
+        )
+        return ReasoningResponse(
+            method="generate_prompt",
+            kind="generated_prompt",
+            prompt_sent=prompt_sent,
+            generated_prompt=answer.strip(),
+            finish_reason=finish,
+            usage=usage,
+        )
+
+    async def _reason_use_prompt(self, request: ReasoningRequest) -> ReasoningResponse:
+        task = request.task.strip()
+        generated = (request.generated_prompt or "").strip()
+        final = self._ensure_task_included(generated, task)
+        answer, finish, usage = await self._call_plain(
+            final, request.max_tokens, request.stop_sequence
+        )
+        return ReasoningResponse(
+            method="use_prompt",
+            kind="solution",
+            prompt_sent=final,
+            solution=answer,
+            finish_reason=finish,
+            usage=usage,
+            status=grade_task(request.task, answer),
+        )
+
+    @staticmethod
+    def _ensure_task_included(prompt: str, task: str) -> str:
+        """The final prompt must contain the original task. If it does not,
+        append the task so the model is never asked to solve an unspecified
+        problem."""
+        normalized = " ".join(prompt.split())
+        normalized_task = " ".join(task.split())
+        if normalized_task and normalized_task in normalized:
+            return prompt
+        return prompt + "\n\nЗадача:\n" + task
+
+    async def _reason_experts(self, request: ReasoningRequest) -> ReasoningResponse:
+        task = request.task.strip()
+        prompt_sent = (
+            "Реши следующую задачу с помощью группы экспертов.\n\n"
+            "Эксперт 1 — Аналитик.\n"
+            "Независимо проанализируй условия задачи и предложи решение.\n\n"
+            "Эксперт 2 — Инженер.\n"
+            "Реши задачу систематически. Проверь допустимые варианты и получи "
+            "решение независимо от аналитика.\n\n"
+            "Эксперт 3 — Критик.\n"
+            "Проверь рассуждения и решения. Найди возможные противоречия с "
+            "исходными условиями и укажи ошибки, если они есть.\n\n"
+            "После мнений всех трёх экспертов сформируй общий итоговый ответ.\n\n"
+            "Структура ответа:\n"
+            "АНАЛИТИК:\n"
+            "ИНЖЕНЕР:\n"
+            "КРИТИК:\n"
+            "ИТОГОВОЕ РЕШЕНИЕ:\n\n"
+            f"Задача:\n\n{task}"
+        )
+        answer, finish, usage = await self._call_plain(
+            prompt_sent, request.max_tokens, request.stop_sequence
+        )
+        return ReasoningResponse(
+            method="experts",
+            kind="solution",
+            prompt_sent=prompt_sent,
+            solution=answer,
+            finish_reason=finish,
+            usage=usage,
+            status=grade_task(request.task, answer),
+        )
+
+    async def _call(
         self,
         messages: list[dict[str, str]],
         *,
         response_format: dict | None = None,
         max_tokens: int | None = None,
         stop: str | None = None,
-    ) -> CompareResult:
-        """Run one Chat Completions call with optional response controls.
+    ):
+        """Run one Chat Completions call and return raw provider fields.
 
-        Only validated, explicitly requested parameters are forwarded:
-
-        * ``response_format`` — structured-output configuration (forwarded
-          as-is to the API, e.g. ``{"type": "json_object"}``);
-        * ``max_tokens``      — output-token limit;
-        * ``stop``            — sent as ``stop=[...]``.
-
-        Returns the answer plus the REAL ``finish_reason`` reported by the
-        provider (``stop`` / ``length`` / whatever DeepSeek returns) — the
-        value is never invented by the application.
+        Returns ``(content, finish_reason, usage)``. ``usage`` is a small
+        dict (prompt/completion/total tokens) when the provider returned it,
+        otherwise ``None``. Raises the same classified ``DeepSeekError``
+        subclasses as ``_complete`` on provider failures / malformed /
+        empty-output responses.
         """
         params: dict = {
             "model": self._settings.deepseek_model,
@@ -402,7 +570,7 @@ class DeepSeekService:
                 first_finish = "?"
             logger.warning(
                 "Malformed DeepSeek response structure (type=%s, choices_len=%s, "
-                "first_choice_has_message=%s, first_finish_reason=%s) — "
+                "first_choice_has_message=%s, first_finish_reason=%s) - "
                 "choices missing/empty or message absent",
                 type(response).__name__,
                 choices_len,
@@ -412,11 +580,6 @@ class DeepSeekService:
             raise DeepSeekMalformedResponseError() from exc
 
         if content is None or not content.strip():
-            # DeepSeek JSON Output returns EMPTY content (HTTP 200, choices_len=1,
-            # finish_reason="length") when the generation token budget is too
-            # small — classify it as an output-limit case, not as malformed.
-            # Genuinely malformed (empty with any other finish_reason) stays a
-            # malformed-response error.
             stop_cfg = params.get("stop")
             stop_len = len(stop_cfg[0]) if stop_cfg else 0
             logger.warning(
@@ -432,10 +595,37 @@ class DeepSeekService:
                 len(response.choices),
             )
             if finish_reason == "length":
-                logger.warning(
-                    "Classified as output-token-limit (finish_reason=length)"
-                )
+                logger.warning("Classified as output-token-limit (finish_reason=length)")
                 raise DeepSeekOutputLimitError() from None
             raise DeepSeekMalformedResponseError() from None
 
-        return CompareResult(answer=content.strip(), finish_reason=finish_reason)
+        return content.strip(), finish_reason, self._extract_usage(response)
+
+    @staticmethod
+    def _extract_usage(response):
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        out = {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            val = getattr(usage, key, None)
+            if val is not None:
+                out[key] = val
+        return out or None
+
+    async def _complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        response_format: dict | None = None,
+        max_tokens: int | None = None,
+        stop: str | None = None,
+    ) -> CompareResult:
+        """Run one Chat Completions call and return a ``CompareResult``."""
+        content, finish_reason, _usage = await self._call(
+            messages,
+            response_format=response_format,
+            max_tokens=max_tokens,
+            stop=stop,
+        )
+        return CompareResult(answer=content, finish_reason=finish_reason)

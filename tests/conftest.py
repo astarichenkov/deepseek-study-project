@@ -20,6 +20,7 @@ from app.schemas.compare import (
     CompareResult,
     ControlledSettings,
 )
+from app.schemas.reasoning import ReasoningRequest, ReasoningResponse
 
 class FakeDeepSeekService:
     """In-memory stand-in for ``DeepSeekService``.
@@ -36,6 +37,8 @@ class FakeDeepSeekService:
         self.raise_error: Exception | None = None
         self.compare_calls: list[CompareRequest] = []
         self.compare_result: CompareResponse | None = None
+        self.reasoning_calls: list[ReasoningRequest] = []
+        self.reasoning_result: ReasoningResponse | None = None
 
     async def chat(self, message: str) -> ChatResponse:
         self.last_message = message
@@ -66,6 +69,30 @@ class FakeDeepSeekService:
                 finish_reason="length",
                 settings=settings,
             ),
+        )
+
+    async def reasoning(self, request: ReasoningRequest) -> ReasoningResponse:
+        self.reasoning_calls.append(request)
+        if self.raise_error is not None:
+            raise self.raise_error
+        if self.reasoning_result is not None:
+            return self.reasoning_result
+        if request.method == "generate_prompt":
+            return ReasoningResponse(
+                method="generate_prompt",
+                kind="generated_prompt",
+                prompt_sent="stage1 prompt",
+                generated_prompt="Реши задачу: " + request.task[:20],
+                finish_reason="stop",
+                usage={"completion_tokens": 40},
+            )
+        return ReasoningResponse(
+            method=request.method,
+            kind="solution",
+            prompt_sent="prompt",
+            solution="Ответ (mock)",
+            finish_reason="stop",
+            status="indeterminate",
         )
 
 

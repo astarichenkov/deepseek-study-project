@@ -1,0 +1,167 @@
+<main class="container day3-panel" id="panel-day3">
+  <h1>День 3 — Разные способы рассуждения</h1>
+  <p class="subtitle">
+    Одна задача решается через DeepSeek API четырьмя способами — результаты сравниваются.
+  </p>
+
+  <!-- TASK -->
+  <div class="field">
+    <div class="field-label-row"><label for="d3-task">Задача</label></div>
+    <textarea id="d3-task" rows="7" maxlength="4000">Анна, Борис и Виктор выступают с докладами в понедельник, вторник и среду — по одному человеку в день.
+
+Известно:
+
+1. Анна не выступает в понедельник.
+2. Борис выступает раньше Виктора.
+3. Виктор не выступает в среду.
+
+Определи, в какой день выступает каждый.</textarea>
+    <p class="field-hint">Эта задача используется всеми четырьмя способами. Измените её — и задача сменится для всех способов.</p>
+  </div>
+
+  <!-- COMMON PARAMS -->
+  <section class="preview-panel" aria-labelledby="d3-params-h">
+    <h2 id="d3-params-h">Общие параметры API</h2>
+    <div class="field">
+      <div class="field-label-row">
+        <label for="d3-max-tokens">Максимальная длина ответа</label>
+        <button type="button" class="info-btn" id="d3-info-max-tokens" aria-expanded="false" aria-controls="tip-d3-max-tokens">ⓘ</button>
+      </div>
+      <div class="input-with-unit">
+        <input type="number" id="d3-max-tokens" min="16" max="2000" step="1" value="1000">
+        <span class="unit">токенов</span>
+      </div>
+      <div class="tooltip" id="tip-d3-max-tokens" role="tooltip">
+        <strong>Что делает:</strong> ограничивает длину генерируемого ответа.<br>
+        <strong>Механизм API:</strong> параметр <code>max_tokens</code>.<br>
+        <strong>Важно:</strong> токен ≠ слово и ≠ символ. Слишком малый лимит
+        может обрезать рассуждения; при исчерпании лимита
+        <code>finish_reason</code> может стать <code>"length"</code>.
+      </div>
+    </div>
+    <div class="field">
+      <div class="field-label-row">
+        <label for="d3-stop">Условие завершения (stop sequence)</label>
+        <button type="button" class="info-btn" id="d3-info-stop" aria-expanded="false" aria-controls="tip-d3-stop">ⓘ</button>
+      </div>
+      <input type="text" id="d3-stop" maxlength="50" value="" placeholder="необязательно">
+      <div class="tooltip" id="tip-d3-stop" role="tooltip">
+        <strong>Что делает:</strong> stop задаёт последовательность, при появлении
+        которой API прекращает дальнейшую генерацию.<br>
+        <strong>Механизм API:</strong> параметр <code>stop</code> — если пусто, не
+        отправляется.<br>
+        <strong>Внимание:</strong> неудачная стоп-последовательность может
+        преждевременно оборвать рассуждение. Используйте различимый маркер
+        (минимум 4 символа с буквой/цифрой).
+      </div>
+    </div>
+  </section>
+
+  <!-- REFERENCE (only for default task) -->
+  <section id="d3-ref-note" class="hidden">
+    <p class="field-hint">
+      <strong>Правильный ответ для демонстрационной задачи:</strong><br>
+      Борис — понедельник · Виктор — вторник · Анна — среда.
+    </p>
+  </section>
+
+  <!-- METHOD CARDS -->
+  <div class="day3-grid">
+
+    <article class="card d3-card" id="card-d3-m1">
+      <h2>1. Прямой ответ</h2>
+      <p class="no-controls-note">Исходная задача отправляется без дополнительных инструкций о способе решения.</p>
+      <button type="button" class="primary-btn" id="d3-m1-run">Получить прямой ответ</button>
+      <span class="loading hidden" id="d3-m1-loading">Получаем прямой ответ…</span>
+      <p class="cost-note">1 API-вызов</p>
+      <p id="d3-m1-error" class="error hidden"></p>
+      <h3 class="applied-heading">Фактически отправленный промпт</h3>
+      <pre id="d3-m1-prompt" class="api-preview"></pre>
+      <h3 class="applied-heading">Ответ DeepSeek</h3>
+      <div id="d3-m1-answer" class="answer"></div>
+      <div class="finish-row">Причина завершения: <code id="d3-m1-finish">—</code>
+        <span id="d3-m1-usage" class="unit"> · токены: н/д</span>
+        <span id="d3-m1-status"></span></div>
+    </article>
+
+    <article class="card d3-card" id="card-d3-m2">
+      <h2>2. Пошаговое решение</h2>
+      <p class="no-controls-note">К той же задаче добавляется инструкция решать пошагово.</p>
+      <button type="button" class="primary-btn" id="d3-m2-run">Решить пошагово</button>
+      <span class="loading hidden" id="d3-m2-loading">DeepSeek решает задачу пошагово…</span>
+      <p class="cost-note">1 API-вызов</p>
+      <p id="d3-m2-error" class="error hidden"></p>
+      <h3 class="applied-heading">Фактически отправленный промпт</h3>
+      <pre id="d3-m2-prompt" class="api-preview"></pre>
+      <h3 class="applied-heading">Ответ DeepSeek</h3>
+      <div id="d3-m2-answer" class="answer"></div>
+      <div class="finish-row">Причина завершения: <code id="d3-m2-finish">—</code>
+        <span id="d3-m2-usage" class="unit"> · токены: н/д</span>
+        <span id="d3-m2-status"></span></div>
+    </article>
+
+    <article class="card d3-card d3-span2" id="card-d3-m3">
+      <h2>3. Сначала составить промпт</h2>
+      <p class="no-controls-note">
+        Сначала DeepSeek создаёт улучшенный промпт. Затем этот промпт можно отправить модели отдельным запросом.
+      </p>
+      <p class="cost-note">Этот способ использует 2 API-запроса: 1 — создание промпта, 2 — решение задачи.</p>
+
+      <h3 class="applied-heading">Этап 1 — создание промпта</h3>
+      <button type="button" class="primary-btn" id="d3-m3-gen">Составить промпт</button>
+      <span class="loading hidden" id="d3-m3-gen-loading">DeepSeek составляет промпт…</span>
+      <p id="d3-m3-gen-error" class="error hidden"></p>
+      <h3 class="applied-heading">Промпт, созданный моделью (можно редактировать)</h3>
+      <textarea id="d3-m3-prompt" class="json-editor" rows="7" spellcheck="false"></textarea>
+
+      <h3 class="applied-heading">Этап 2 — решение</h3>
+      <button type="button" class="primary-btn" id="d3-m3-use" disabled>Использовать этот промпт</button>
+      <span class="loading hidden" id="d3-m3-use-loading">DeepSeek решает задачу по созданному промпту…</span>
+      <p id="d3-m3-use-error" class="error hidden"></p>
+      <h3 class="applied-heading">Фактически отправленный промпт</h3>
+      <pre id="d3-m3-sent" class="api-preview"></pre>
+      <h3 class="applied-heading">Ответ DeepSeek</h3>
+      <div id="d3-m3-answer" class="answer"></div>
+      <div class="finish-row">Причина завершения: <code id="d3-m3-finish">—</code>
+        <span id="d3-m3-usage" class="unit"> · токены: н/д</span>
+        <span id="d3-m3-status"></span></div>
+    </article>
+
+    <article class="card d3-card d3-span2" id="card-d3-m4">
+      <h2>4. Группа экспертов</h2>
+      <p class="no-controls-note">
+        Несколько экспертных ролей описываются внутри одного промпта — это один API-вызов, а не настоящая multi-agent система.
+      </p>
+      <button type="button" class="primary-btn" id="d3-m4-run">Получить решение экспертов</button>
+      <span class="loading hidden" id="d3-m4-loading">Группа экспертов формирует решение…</span>
+      <p class="cost-note">1 API-вызов</p>
+      <p id="d3-m4-error" class="error hidden"></p>
+      <h3 class="applied-heading">Фактически отправленный промпт</h3>
+      <pre id="d3-m4-prompt" class="api-preview"></pre>
+      <h3 class="applied-heading">Ответ DeepSeek</h3>
+      <div id="d3-m4-answer" class="answer"></div>
+      <div class="finish-row">Причина завершения: <code id="d3-m4-finish">—</code>
+        <span id="d3-m4-usage" class="unit"> · токены: н/д</span>
+        <span id="d3-m4-status"></span></div>
+    </article>
+  </div>
+
+  <!-- COMPARISON -->
+  <section id="d3-compare-section" class="hidden">
+    <h2>Сравнение результатов</h2>
+    <p class="cost-note">
+      Полное сравнение всех четырёх способов использует 5 API-запросов к DeepSeek.
+    </p>
+    <p id="d3-conclusion-text"></p>
+    <table class="compare-table">
+      <thead><tr>
+        <th>Метод</th><th>API-вызовы</th><th>finish_reason</th><th>Токены ответа</th><th>Совпадает с эталоном</th><th>Комментарий</th>
+      </tr></thead>
+      <tbody id="d3-compare-tbody"></tbody>
+    </table>
+    <div class="field">
+      <div class="field-label-row"><label for="d3-conclusion">Мой вывод</label></div>
+      <textarea id="d3-conclusion" rows="3" placeholder="Наиболее точным оказался…"></textarea>
+    </div>
+  </section>
+</main>

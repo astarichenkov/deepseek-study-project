@@ -89,3 +89,56 @@ def test_js_is_wrapped_for_dom_ready_and_missing_element_guard(client):
     assert "DOMContentLoaded" in js
     assert "requiredIds" in js
     assert "missing DOM elements" in js
+
+
+def test_homepage_has_both_tabs(client):
+    html = client.get("/").text
+    assert 'id="tab-day2"' in html
+    assert 'id="tab-day3"' in html
+    assert 'id="panel-day2"' in html
+    assert 'id="panel-day3"' in html
+    assert "День 2 — Управление ответом" in html
+    assert "День 3 — Способы рассуждения" in html
+    assert 'src="/static/js/day3.js"' in html
+
+
+def test_day3_required_elements_and_default_task(client):
+    html = client.get("/").text
+    # Day 2 controls must remain
+    assert 'id="compare-form"' in html
+    # default Day 3 task present
+    assert "Анна, Борис и Виктор выступают с докладами" in html
+    assert "Определи, в какой день выступает каждый." in html
+    for el in [
+        "d3-task", "d3-max-tokens", "d3-stop", "d3-ref-note",
+        "d3-compare-section", "d3-compare-tbody",
+        "d3-m1-run", "d3-m1-prompt", "d3-m1-answer", "d3-m1-finish",
+        "d3-m2-run", "d3-m3-gen", "d3-m3-prompt", "d3-m3-use", "d3-m3-sent",
+        "d3-m4-run", "d3-m4-prompt", "d3-m4-answer", "d3-conclusion",
+    ]:
+        assert f'id="{el}"' in html, f"missing Day3 id {el}"
+    assert "5 API-запросов к DeepSeek" in html or "5 API-запросов" in html
+
+
+def test_no_duplicate_ids_in_homepage(client):
+    import re
+    import collections
+
+    ids = re.findall(r'id="([^"]+)"', client.get("/").text)
+    dups = [k for k, v in collections.Counter(ids).items() if v > 1]
+    assert not dups, f"duplicate ids: {dups}"
+
+
+def test_day3_js_dom_references_exist(client):
+    import re
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parents[1] / "app" / "static" / "js"
+    referenced = set()
+    for name in ("app.js", "day3.js"):
+        src = (base / name).read_text(encoding="utf-8")
+        referenced |= set(re.findall(r'getElementById\("([^"]+)"\)', src))
+    assert referenced
+    present = set(re.findall(r'id="([^"]+)"', client.get("/").text))
+    missing = sorted(referenced - present)
+    assert not missing, f"referenced but missing ids: {missing}"

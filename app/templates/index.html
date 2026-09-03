@@ -7,7 +7,12 @@
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-  <main class="container">
+  <nav class="tabbar" aria-label="Разделы">
+    <button type="button" class="tab-btn active" id="tab-day2" data-tab="day2" aria-selected="true">День 2 — Управление ответом</button>
+    <button type="button" class="tab-btn" id="tab-day3" data-tab="day3" aria-selected="false">День 3 — Способы рассуждения</button>
+  </nav>
+
+  <main class="container" id="panel-day2">
     <h1>DeepSeek API — управление ответом модели</h1>
     <p class="subtitle">
       Один и тот же запрос с разным уровнем контроля ответа через API.
@@ -252,6 +257,9 @@
     </section>
   </main>
 
+  {% include '_day3.html' %}
+
   <script src="/static/js/app.js"></script>
+  <script src="/static/js/day3.js"></script>
 </body>
 </html>
