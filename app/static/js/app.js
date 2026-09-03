@@ -235,7 +235,10 @@
       } else {
         // Controlled provider call failed: requested controls still shown.
         answerControlled.textContent = "";
-        finishControlled.textContent = "недоступна — запрос завершился ошибкой";
+        // If the real finish_reason is known (e.g. max_tokens output limit
+        // gave finish_reason "length"), show it; otherwise mark unavailable.
+        finishControlled.textContent = data.controlled_finish_reason ||
+          "недоступна — запрос завершился ошибкой";
         appliedHeading.textContent = "Запрошенные API-параметры";
         appliedSettings.textContent = JSON.stringify(
           {
@@ -247,8 +250,10 @@
           2
         );
         structureUsed.textContent = JSON.stringify(requested.json_structure, null, 2);
-        controlledError.textContent =
-          "Контролируемый запрос не выполнен: " +
+        var prefix = data.controlled_finish_reason
+          ? "Ответ не поместился в max_tokens: "
+          : "Контролируемый запрос не выполнен: ";
+        controlledError.textContent = prefix +
           (data.controlled_error || "неизвестная ошибка.");
         controlledError.classList.remove("hidden");
       }
@@ -276,7 +281,7 @@
         : "—";
       var finishC = controlled
         ? (controlled.finish_reason || "—")
-        : "недоступна (запрос завершился ошибкой)";
+        : (data.controlled_finish_reason || "недоступна (запрос завершился ошибкой)");
       var items = [
         "Запрос отправлен в DeepSeek дважды — один и тот же текст, без изменений.",
         "Формат: response_format = " + JSON.stringify(requested.response_format) +

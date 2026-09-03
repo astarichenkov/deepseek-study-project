@@ -102,6 +102,24 @@ class DeepSeekMalformedResponseError(DeepSeekError):
         )
 
 
+class DeepSeekOutputLimitError(DeepSeekError):
+    """DeepSeek JSON Output returned EMPTY content because the generation
+    token budget (max_tokens) was too small — NOT a malformed response.
+
+    Verified against the real provider: with response_format=json_object a
+    too-small max_tokens yields HTTP 200, choices_len=1 and EMPTY content
+    with finish_reason="length".
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Ответ не поместился в заданный лимит max_tokens. "
+            "Увеличьте максимальную длину ответа.",
+            502,
+        )
+        self.finish_reason = "length"
+
+
 class DeepSeekService:
     """Thin wrapper around ``AsyncOpenAI`` configured for DeepSeek."""
 
@@ -218,6 +236,21 @@ class DeepSeekService:
                 response_format=FIXED_RESPONSE_FORMAT,
                 max_tokens=request.max_tokens,
                 stop=request.stop_sequence,
+            )
+        except DeepSeekOutputLimitError as exc:
+            logger.warning(
+                "controlled call failed output_limit exception_class=%s "
+                "finish_reason=%s max_tokens=%s",
+                type(exc).__name__,
+                exc.finish_reason,
+                request.max_tokens,
+            )
+            return CompareResponse(
+                unrestricted=self._result(unrestricted),
+                settings=settings_echo,
+                controlled=None,
+                controlled_error=exc.message,
+                controlled_finish_reason=exc.finish_reason,
             )
         except DeepSeekError as exc:
             logger.warning(
@@ -379,10 +412,11 @@ class DeepSeekService:
             raise DeepSeekMalformedResponseError() from exc
 
         if content is None or not content.strip():
-            # Real DeepSeek behaviour: with response_format=json_object a stop
-            # that matches generated text (or a too-large output) can yield
-            # EMPTY content (finish_reason "length"/"stop"). Log safe
-            # diagnostics (no raw stop value, no prompt); do not fake data.
+            # DeepSeek JSON Output returns EMPTY content (HTTP 200, choices_len=1,
+            # finish_reason="length") when the generation token budget is too
+            # small — classify it as an output-limit case, not as malformed.
+            # Genuinely malformed (empty with any other finish_reason) stays a
+            # malformed-response error.
             stop_cfg = params.get("stop")
             stop_len = len(stop_cfg[0]) if stop_cfg else 0
             logger.warning(
@@ -397,6 +431,11 @@ class DeepSeekService:
                 stop_len,
                 len(response.choices),
             )
+            if finish_reason == "length":
+                logger.warning(
+                    "Classified as output-token-limit (finish_reason=length)"
+                )
+                raise DeepSeekOutputLimitError() from None
             raise DeepSeekMalformedResponseError() from None
 
         return CompareResult(answer=content.strip(), finish_reason=finish_reason)

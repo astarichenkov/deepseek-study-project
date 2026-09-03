@@ -164,9 +164,17 @@ class CompareResult(BaseModel):
 
 
 class CompareResponse(BaseModel):
-    """Result of one comparison operation (two provider calls)."""
+    """Result of one comparison operation (two provider calls).
+
+    ``settings`` echoes the REQUESTED controlled parameters and is always
+    present. ``controlled`` is ``None`` (with a friendly ``controlled_error``)
+    when the controlled provider call failed but the unrestricted one
+    succeeded. When that failure is a known output-token-limit case, the real
+    ``controlled_finish_reason`` (e.g. ``"length"``) is still surfaced.
+    """
 
     unrestricted: CompareResult
     settings: ControlledSettings
     controlled: CompareResult | None = None
     controlled_error: str | None = None
+    controlled_finish_reason: str | None = None

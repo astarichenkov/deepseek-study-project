@@ -171,6 +171,30 @@ def test_compare_partial_failure_keeps_requested_controls(client, fake_service):
     assert body["settings"]["json_structure"] == DEFAULT_JSON_STRUCTURE
 
 
+def test_compare_output_limit_partial_surfaces_finish_reason(client, fake_service):
+    fake_service.compare_result = CompareResponse(
+        unrestricted=CompareResult(answer="Unrestricted answer.", finish_reason="stop"),
+        settings=ControlledSettings(
+            response_format={"type": "json_object"},
+            max_tokens=150,
+            stop=None,
+            json_structure=DEFAULT_JSON_STRUCTURE,
+        ),
+        controlled=None,
+        controlled_error="Ответ не поместился в заданный лимит max_tokens. Увеличьте максимальную длину ответа.",
+        controlled_finish_reason="length",
+    )
+    response = client.post("/api/compare", json=VALID_PAYLOAD)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["controlled"] is None
+    assert body["controlled_finish_reason"] == "length"
+    assert "max_tokens" in body["controlled_error"]
+    # requested parameters visible
+    assert body["settings"]["max_tokens"] == 150
+    assert body["settings"]["response_format"] == {"type": "json_object"}
+
+
 def test_compare_unexpected_error_returns_generic_500(client, fake_service):
     fake_service.raise_error = RuntimeError("secret internal detail")
     response = client.post("/api/compare", json=VALID_PAYLOAD)

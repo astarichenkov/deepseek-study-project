@@ -287,12 +287,51 @@ def test_controlled_invalid_json_answer_passthrough(make_service):
     assert response.controlled.finish_reason == "stop"
 
 
-def test_controlled_empty_content_yields_partial_failure(make_service):
+def test_controlled_empty_length_is_output_limit(make_service):
+    """Empty content + finish_reason='length' -> classified as output-token
+    limit, message mentions max_tokens, real finish_reason surfaced."""
     service, _ = make_service([_completion("Unrestricted OK"), _completion("", "length")])
-    response = run(service.compare(_sample_request()))
+    response = run(service.compare(_sample_request(max_tokens=150)))
     assert response.unrestricted.answer == "Unrestricted OK"
     assert response.controlled is None
+    assert response.controlled_finish_reason == "length"
     assert response.controlled_error
+    assert "max_tokens" in response.controlled_error
+    # requested parameters remain visible
+    assert response.settings.max_tokens == 150
+
+
+def test_controlled_none_length_is_output_limit(make_service):
+    service, _ = make_service([_completion("Unrestricted OK"), _completion(None, "length")])
+    response = run(service.compare(_sample_request(max_tokens=100)))
+    assert response.controlled is None
+    assert response.controlled_finish_reason == "length"
+    assert "max_tokens" in response.controlled_error
+
+
+def test_controlled_empty_content_other_finish_is_malformed(make_service):
+    """Empty content with finish_reason != length stays malformed-response."""
+    service, _ = make_service([_completion("Unrestricted OK"), _completion("", "stop")])
+    response = run(service.compare(_sample_request()))
+    assert response.controlled is None
+    assert response.controlled_finish_reason is None
+    assert "unexpected response" in response.controlled_error
+
+
+def test_unrestricted_empty_length_raises_output_limit(make_service):
+    from app.services.deepseek import DeepSeekOutputLimitError
+
+    service, _ = make_service([_completion("", "length"), _completion("never")])
+    with pytest.raises(DeepSeekOutputLimitError):
+        run(service.compare(_sample_request()))
+
+
+def test_output_limit_does_not_retry(make_service):
+    service, client = make_service(
+        [_completion("Unrestricted OK"), _completion("", "length")]
+    )
+    run(service.compare(_sample_request(max_tokens=150)))
+    assert len(client.completions.calls) == 2
 
 
 def test_controlled_none_content_yields_partial_failure(make_service):
@@ -300,6 +339,7 @@ def test_controlled_none_content_yields_partial_failure(make_service):
     response = run(service.compare(_sample_request()))
     assert response.unrestricted.answer == "Unrestricted OK"
     assert response.controlled is None
+    assert response.controlled_finish_reason is None
 
 
 def test_content_none_with_stop_is_still_malformed(make_service):
