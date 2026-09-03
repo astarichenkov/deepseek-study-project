@@ -302,6 +302,37 @@ def test_controlled_none_content_yields_partial_failure(make_service):
     assert response.controlled is None
 
 
+def test_content_none_with_stop_is_still_malformed(make_service):
+    """content=None with stop configured is still a malformed provider
+    response (partial failure), never fabricated."""
+    service, _ = make_service(
+        [
+            _completion("Unrestricted OK", "stop"),
+            _completion(None, "stop"),  # stop-configured controlled call
+        ]
+    )
+    response = run(service.compare(_sample_request(stop_sequence="STOP")))
+    assert response.unrestricted.answer == "Unrestricted OK"
+    assert response.controlled is None
+    assert response.controlled_error
+    assert response.settings.stop == ["STOP"]
+
+
+def test_valid_stop_terminated_response_is_accepted(make_service):
+    """A non-empty provider response with a stop-configured request is accepted
+    normally (not treated as malformed just because stop is set)."""
+    service, _ = make_service(
+        [
+            _completion("Unrestricted OK", "stop"),
+            _completion('{"products": []}', "stop"),
+        ]
+    )
+    response = run(service.compare(_sample_request(stop_sequence="STOP")))
+    assert response.controlled is not None
+    assert response.controlled.answer == '{"products": []}'
+    assert response.controlled.finish_reason == "stop"
+
+
 def test_requested_controls_survive_controlled_failure(make_service):
     service, _ = make_service(
         [_completion("Unrestricted OK"), _status_error(RateLimitError, 429)]

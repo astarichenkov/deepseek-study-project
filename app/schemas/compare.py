@@ -31,6 +31,12 @@ from pydantic import BaseModel, Field, field_validator
 from app.schemas.chat import MAX_MESSAGE_LENGTH, ensure_not_blank
 
 MAX_STOP_SEQUENCE_LENGTH = 50
+# Minimum length for a stop sequence. Verified against DeepSeek json_object:
+# a stop token that matches text the model is generating stops generation
+# early and can yield EMPTY content (-> 'unexpected response'). Requiring a
+# distinctive token of at least 4 chars incl. a letter/digit makes an early
+# mid-JSON match unlikely and the stop behavior predictable.
+MIN_STOP_SEQUENCE_LENGTH = 4
 MIN_MAX_TOKENS = 16
 MAX_MAX_TOKENS = 2000
 # Working default. Kept compact (instruction bounds the list to ~7 items) so
@@ -111,7 +117,8 @@ class CompareRequest(BaseModel):
     @field_validator("stop_sequence")
     @classmethod
     def clean_stop_sequence(cls, value: str | None) -> str | None:
-        """Trim; blank becomes None; enforce length after trimming."""
+        """Trim; blank becomes None; enforce min/max length and that the value
+        contains at least one letter or digit (a distinctive token)."""
         if value is None:
             return None
         value = value.strip()
@@ -120,6 +127,14 @@ class CompareRequest(BaseModel):
         if len(value) > MAX_STOP_SEQUENCE_LENGTH:
             raise ValueError(
                 f"stop_sequence is too long (max {MAX_STOP_SEQUENCE_LENGTH} characters)"
+            )
+        if len(value) < MIN_STOP_SEQUENCE_LENGTH or not any(
+            ch.isalnum() for ch in value
+        ):
+            raise ValueError(
+                "stop_sequence must be a distinctive marker of at least "
+                f"{MIN_STOP_SEQUENCE_LENGTH} characters (letters/digits); "
+                "very short or symbol-only sequences can stop generation inside JSON"
             )
         return value
 

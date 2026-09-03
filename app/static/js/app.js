@@ -169,6 +169,13 @@
         max_tokens: maxTokens
       };
       var stopRaw = stopEl.value.trim();
+      if (stopRaw && stopRaw.length < 4) {
+        showError(
+          "Стоп-последовательность должна быть различимым маркером (минимум 4 символа, включая букву или цифру). Короткий маркер может оборвать генерацию внутри JSON."
+        );
+        stopEl.focus();
+        return;
+      }
       if (stopRaw) {
         payload.stop_sequence = stopRaw;
       }

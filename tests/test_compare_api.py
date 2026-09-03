@@ -112,6 +112,20 @@ def test_compare_stop_sequence_too_long(client):
     assert client.post("/api/compare", json={**VALID_PAYLOAD, "stop_sequence": "x" * 51}).status_code == 422
 
 
+@pytest.mark.parametrize("short_stop", ["x", "END", "}", "###", "$$$"])
+def test_compare_short_or_symbol_only_stop_rejected(client, short_stop):
+    """Too-short or symbol-only stop sequences can terminate inside JSON
+    (verified against DeepSeek json mode) -> rejected with 422."""
+    assert client.post("/api/compare", json={**VALID_PAYLOAD, "stop_sequence": short_stop}).status_code == 422
+
+
+def test_compare_distinctive_stop_accepted(client):
+    for stop in ["STOP", "###END###", "<STOP_JSON>"]:
+        r = client.post("/api/compare", json={**VALID_PAYLOAD, "stop_sequence": stop})
+        assert r.status_code == 200
+        assert r.json()["settings"]["stop"] == [stop]
+
+
 def test_validation_failure_causes_zero_service_calls(client, fake_service):
     bad_payloads = [
         {**VALID_PAYLOAD, "json_structure": []},

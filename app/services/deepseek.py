@@ -379,18 +379,23 @@ class DeepSeekService:
             raise DeepSeekMalformedResponseError() from exc
 
         if content is None or not content.strip():
-            # Real DeepSeek behaviour: with response_format=json_object the
-            # provider sometimes returns EMPTY content (finish_reason
-            # "length"/"stop"). Log safe diagnostics; do not fake data.
+            # Real DeepSeek behaviour: with response_format=json_object a stop
+            # that matches generated text (or a too-large output) can yield
+            # EMPTY content (finish_reason "length"/"stop"). Log safe
+            # diagnostics (no raw stop value, no prompt); do not fake data.
+            stop_cfg = params.get("stop")
+            stop_len = len(stop_cfg[0]) if stop_cfg else 0
             logger.warning(
                 "DeepSeek returned empty content (content_is_none=%s, "
                 "content_length=0, finish_reason=%r, response_format=%s, "
-                "max_tokens=%s, stop=%s)",
+                "max_tokens=%s, stop_configured=%s, stop_length=%s, choices_len=%s)",
                 content is None,
                 finish_reason,
                 params.get("response_format"),
                 params.get("max_tokens"),
-                params.get("stop"),
+                bool(stop_cfg),
+                stop_len,
+                len(response.choices),
             )
             raise DeepSeekMalformedResponseError() from None
 
