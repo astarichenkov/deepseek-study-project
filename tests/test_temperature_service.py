@@ -137,3 +137,13 @@ def test_provider_rate_limit_maps(make_service):
     service, _ = make_service([_status_error(RateLimitError, 429)])
     with pytest.raises(DeepSeekRateLimitError):
         run(service.complete_with_temperature(_req(0.7)))
+
+
+def test_day4_sends_thinking_disabled_extra_body(make_service):
+    service, client = make_service([_completion("Ответ")])
+    run(service.complete_with_temperature(_req(0.7)))
+    call = client.completions.calls[0]
+    assert call.get("extra_body") == {"thinking": {"type": "disabled"}}
+    assert "reasoning_effort" not in call
+    assert call["temperature"] == 0.7
+    assert call["max_tokens"] == 700

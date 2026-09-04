@@ -195,3 +195,12 @@ def test_exception_mapping(make_service, exc, expected, expected_status):
     with pytest.raises(expected) as excinfo:
         asyncio.run(service.chat("hi"))
     assert excinfo.value.status_code == expected_status
+
+
+def test_chat_sends_no_thinking_override(make_service):
+    completion = FakeChatCompletion([FakeChoice(FakeMessage("ok"))])
+    service, client = make_service(completion)
+    asyncio.run(service.chat("hi"))
+    call = client.completions.calls[0]
+    assert "extra_body" not in call
+    assert "reasoning_effort" not in call

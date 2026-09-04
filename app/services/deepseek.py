@@ -493,10 +493,12 @@ class DeepSeekService:
     async def complete_with_temperature(
         self, request: TemperatureRequest
     ) -> TemperatureResponse:
-        """Day 4: send the message with the given REAL temperature value."""
+        """Day 4: send the message with the given REAL temperature value.
+        Thinking mode is disabled so temperature actually affects generation.
+        """
         logger.info(
-            "temperature request started temperature=%s message_length=%s "
-            "max_tokens=%s stop_configured=%s",
+            "temperature request started temperature=%s thinking_mode=disabled "
+            "message_length=%s max_tokens=%s stop_configured=%s",
             request.temperature,
             len(request.message),
             request.max_tokens,
@@ -510,6 +512,7 @@ class DeepSeekService:
             max_tokens=request.max_tokens,
             stop=request.stop_sequence,
             temperature=request.temperature,
+            extra_body={"thinking": {"type": "disabled"}},
         )
         logger.info(
             "temperature request completed finish_reason=%s content_length=%s usage=%s",
@@ -526,6 +529,7 @@ class DeepSeekService:
                 "temperature": request.temperature,
                 "max_tokens": request.max_tokens,
                 "stop": [request.stop_sequence] if request.stop_sequence else None,
+                "mode": "non-thinking",
             },
         )
 
@@ -537,6 +541,7 @@ class DeepSeekService:
         max_tokens: int | None = None,
         stop: str | None = None,
         temperature: float = 0.7,
+        extra_body: dict | None = None,
     ):
         """Run one Chat Completions call and return raw provider fields.
 
@@ -545,6 +550,10 @@ class DeepSeekService:
         otherwise ``None``. Raises the same classified ``DeepSeekError``
         subclasses as ``_complete`` on provider failures / malformed /
         empty-output responses.
+
+        ``extra_body`` (optional) is forwarded verbatim to the provider (e.g.
+        ``{"thinking": {"type": "disabled"}}`` for DeepSeek Non-Thinking). It
+        is only used by Day 4; Day 2 / Day 3 pass ``None``.
         """
         params: dict = {
             "model": self._settings.deepseek_model,
@@ -557,6 +566,8 @@ class DeepSeekService:
             params["max_tokens"] = max_tokens
         if stop:
             params["stop"] = [stop]
+        if extra_body:
+            params["extra_body"] = extra_body
 
         try:
             response = await self._client.chat.completions.create(**params)

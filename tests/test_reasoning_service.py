@@ -199,3 +199,11 @@ def test_provider_rate_limit_maps(make_service):
     service, _ = make_service([_status_error(RateLimitError, 429)])
     with pytest.raises(DeepSeekRateLimitError):
         run(service.reasoning(_req("direct")))
+
+
+def test_reasoning_sends_no_thinking_override(make_service):
+    service, client = make_service([_completion("x")])
+    run(service.reasoning(_req("direct")))
+    call = client.completions.calls[0]
+    assert "extra_body" not in call
+    assert "reasoning_effort" not in call

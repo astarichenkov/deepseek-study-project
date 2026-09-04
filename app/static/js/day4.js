@@ -104,7 +104,7 @@
           var ap = data.applied_parameters || {};
           var stopShown = (ap.stop && ap.stop.length) ? JSON.stringify(ap.stop) : "не задан";
           setText($("d4-" + key + "-params"),
-            "model: " + ap.model + "\ntemperature: " + ap.temperature + "\nmax_tokens: " + ap.max_tokens + "\nstop: " + stopShown);
+            "Режим: Non-Thinking (thinking: disabled)\nmodel: " + ap.model + "\ntemperature: " + ap.temperature + "\nmax_tokens: " + ap.max_tokens + "\nstop: " + stopShown);
           setText($("d4-" + key + "-answer"), data.answer || "");
           setText($("d4-" + key + "-finish"), data.finish_reason || "—");
           if (data.finish_reason === "length") {
