@@ -135,10 +135,53 @@ def test_day3_js_dom_references_exist(client):
 
     base = Path(__file__).resolve().parents[1] / "app" / "static" / "js"
     referenced = set()
-    for name in ("app.js", "day3.js"):
+    for name in ("app.js", "day3.js", "day4.js"):
         src = (base / name).read_text(encoding="utf-8")
         referenced |= set(re.findall(r'getElementById\("([^"]+)"\)', src))
     assert referenced
     present = set(re.findall(r'id="([^"]+)"', client.get("/").text))
     missing = sorted(referenced - present)
     assert not missing, f"referenced but missing ids: {missing}"
+
+
+def test_homepage_has_day4_tab(client):
+    html = client.get("/").text
+    assert 'id="tab-day4"' in html
+    assert 'id="panel-day4"' in html
+    assert "День 4 — Температура" in html
+    assert 'src="/static/js/day4.js"' in html
+
+
+def test_day4_structure(client):
+    html = client.get("/").text
+    # common prompt once
+    assert html.count("Объясни школьнику, что такое искусственный интеллект") == 1
+    # sub-tabs
+    for sid in ("d4-sub-0", "d4-sub-07", "d4-sub-12", "d4-sub-out"):
+        assert f'id="{sid}"' in html
+    # default temperatures editable
+    for el, val in (("d4-0-temp", 'value="0"'), ("d4-07-temp", 'value="0.7"'), ("d4-12-temp", 'value="1.2"')):
+        assert f'id="{el}"' in html and val in html
+    # fair indicator + conclusions + rating controls
+    assert 'id="d4-fair-indicator"' in html
+    assert 'id="d4-conclusion"' in html
+    assert 'id="d4-out-t0use"' in html and 'id="d4-out-t07use"' in html and 'id="d4-out-t12use"' in html
+    for k in ("0", "07", "12"):
+        for r in ("acc", "crea", "dive"):
+            assert f'id="d4-r-{k}-{r}"' in html
+    # Day 4 has no response_format / JSON-mode control
+    assert 'response_format' not in html or "День 2" in html
+
+
+def test_day4_js_dom_references_exist(client):
+    import re
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parents[1] / "app" / "static" / "js"
+    referenced = set()
+    for name in ("day4.js",):
+        src = (base / name).read_text(encoding="utf-8")
+        referenced |= set(re.findall(r'getElementById\("([^"]+)"\)', src))
+    present = set(re.findall(r'id="([^"]+)"', client.get("/").text))
+    missing = sorted(referenced - present)
+    assert not missing, f"day4.js references missing ids: {missing}"

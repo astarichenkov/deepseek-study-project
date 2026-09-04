@@ -21,6 +21,7 @@ from app.schemas.compare import (
     ControlledSettings,
 )
 from app.schemas.reasoning import ReasoningRequest, ReasoningResponse
+from app.schemas.temperature import TemperatureRequest, TemperatureResponse
 
 class FakeDeepSeekService:
     """In-memory stand-in for ``DeepSeekService``.
@@ -39,6 +40,7 @@ class FakeDeepSeekService:
         self.compare_result: CompareResponse | None = None
         self.reasoning_calls: list[ReasoningRequest] = []
         self.reasoning_result: ReasoningResponse | None = None
+        self.temperature_calls: list[TemperatureRequest] = []
 
     async def chat(self, message: str) -> ChatResponse:
         self.last_message = message
@@ -93,6 +95,22 @@ class FakeDeepSeekService:
             solution="Ответ (mock)",
             finish_reason="stop",
             status="indeterminate",
+        )
+
+    async def complete_with_temperature(self, request: TemperatureRequest) -> TemperatureResponse:
+        self.temperature_calls.append(request)
+        if self.raise_error is not None:
+            raise self.raise_error
+        return TemperatureResponse(
+            answer=self.answer,
+            finish_reason="stop",
+            usage={"prompt_tokens": 10, "completion_tokens": 30, "total_tokens": 40},
+            applied_parameters={
+                "model": "deepseek-v4-flash",
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "stop": [request.stop_sequence] if request.stop_sequence else None,
+            },
         )
 
 

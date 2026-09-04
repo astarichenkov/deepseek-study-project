@@ -397,3 +397,28 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
   .day3-grid { grid-template-columns: 1fr; }
   .d3-span2 { grid-column: auto; }
 }
+
+/* ---------------- Day 4 ---------------- */
+#panel-day4 { display: none; }
+#panel-day4.active { display: block; }
+
+.d4-subbar { margin-top: 0.4rem; }
+.d4-sub { display: block; }
+.d4-sub.hidden { display: none; }
+
+.d4-controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 0.8rem; }
+.d4-controls input[type="number"] { max-width: 140px; }
+
+.rating-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin: 0.6rem 0 1.2rem; }
+.rating-box { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem; background: var(--panel-2); }
+.rating-box h4 { margin: 0 0 0.4rem; }
+.rating-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.3rem 0; }
+.rating-row select { padding: 0.2rem 0.4rem; }
+.rating-row label { font-size: 0.85rem; color: var(--muted); }
+
+#d4-answers-block details { margin: 0.3rem 0; border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.6rem; }
+#d4-answers-block summary { cursor: pointer; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .d4-controls, .rating-grid { grid-template-columns: 1fr; }
+}

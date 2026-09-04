@@ -1,0 +1,215 @@
+<main class="container day4-panel" id="panel-day4">
+  <h1>🔥 День 4 — Температура</h1>
+  <p class="subtitle">Один и тот же запрос с разными значениями temperature</p>
+  <p class="field-hint">
+    Temperature управляет вариативностью генерации модели. В этом эксперименте
+    один и тот же запрос отправляется с разными значениями temperature.
+  </p>
+
+  <!-- COMMON PROMPT (single) -->
+  <div class="field">
+    <div class="field-label-row"><label for="d4-task">Один и тот же запрос для всех температур</label></div>
+    <textarea id="d4-task" rows="5" maxlength="4000">Объясни школьнику, что такое искусственный интеллект. Приведи один простой пример и одну запоминающуюся аналогию.</textarea>
+    <p class="field-hint">
+      Этот текст будет отправлен без изменений во всех трёх температурных экспериментах.
+    </p>
+  </div>
+
+  <!-- SUB-TAB NAV -->
+  <nav class="tabbar d4-subbar" aria-label="Эксперименты с температурой">
+    <button type="button" class="tab-btn active" id="d4-sub-0" data-sub="t0">Temperature 0</button>
+    <button type="button" class="tab-btn" id="d4-sub-07" data-sub="t07">Temperature 0.7</button>
+    <button type="button" class="tab-btn" id="d4-sub-12" data-sub="t12">Temperature 1.2</button>
+    <button type="button" class="tab-btn" id="d4-sub-out" data-sub="out">Мой вывод</button>
+  </nav>
+
+  <!-- Temperature 0 -->
+  <section class="d4-sub" id="d4-panel-t0">
+    <h2>Temperature = 0</h2>
+    <p class="no-controls-note">Минимальная вариативность. Обычно ответы более предсказуемы и консервативны.</p>
+    <div class="d4-controls">
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-0-temp">Temperature</label>
+          <button type="button" class="info-btn" id="d4-0-info-temp" aria-expanded="false" aria-controls="tip-d4-0-temp">ⓘ</button>
+        </div>
+        <input type="number" id="d4-0-temp" min="0" max="2" step="0.1" value="0">
+        <p class="field-hint" id="d4-0-assignment">Значение по заданию: 0</p>
+        <div class="tooltip" id="tip-d4-0-temp" role="tooltip">
+          temperature — параметр API, влияющий на случайность выбора следующих токенов. Низкая temperature обычно делает ответы более предсказуемыми и консервативными. Средняя даёт баланс между стабильностью и вариативностью. Высокая может увеличить разнообразие формулировок, но снизить стабильность и точность. Эффект вероятностный. Temperature не делает модель умнее и не изменяет её знания.
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-0-max">max_tokens</label>
+          <button type="button" class="info-btn" id="d4-0-info-max" aria-expanded="false" aria-controls="tip-d4-0-max">ⓘ</button>
+        </div>
+        <input type="number" id="d4-0-max" min="16" max="2000" value="700">
+        <div class="tooltip" id="tip-d4-0-max" role="tooltip">max_tokens ограничивает максимальную длину генерации. Для корректного сравнения температур рекомендуется использовать одинаковое значение во всех трёх запросах.</div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-0-stop">stop sequence</label>
+          <button type="button" class="info-btn" id="d4-0-info-stop" aria-expanded="false" aria-controls="tip-d4-0-stop">ⓘ</button>
+        </div>
+        <input type="text" id="d4-0-stop" maxlength="50" value="" placeholder="необязательно">
+        <div class="tooltip" id="tip-d4-0-stop" role="tooltip">stop задаёт последовательность, при появлении которой API прекращает дальнейшую генерацию. Для чистого сравнения temperature рекомендуется оставить stop одинаковым во всех трёх запросах.</div>
+      </div>
+    </div>
+    <button type="button" class="primary-btn" id="d4-0-send">Отправить</button>
+    <span class="loading hidden" id="d4-0-loading">Запрос к DeepSeek выполняется…</span>
+    <p id="d4-0-error" class="error hidden"></p>
+    <h3 class="applied-heading">Фактически отправленные параметры API</h3>
+    <pre id="d4-0-params" class="api-preview"></pre>
+    <h3 class="applied-heading">Ответ DeepSeek</h3>
+    <div id="d4-0-answer" class="answer"></div>
+    <div class="finish-row">Причина завершения: <code id="d4-0-finish">—</code>
+      <span id="d4-0-usage" class="unit"></span></div>
+  </section>
+
+  <!-- Temperature 0.7 -->
+  <section class="d4-sub hidden" id="d4-panel-t07">
+    <h2>Temperature = 0.7</h2>
+    <p class="no-controls-note">Сбалансированная вариативность.</p>
+    <div class="d4-controls">
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-07-temp">Temperature</label>
+          <button type="button" class="info-btn" id="d4-07-info-temp" aria-expanded="false" aria-controls="tip-d4-07-temp">ⓘ</button>
+        </div>
+        <input type="number" id="d4-07-temp" min="0" max="2" step="0.1" value="0.7">
+        <p class="field-hint" id="d4-07-assignment">Значение по заданию: 0.7</p>
+        <div class="tooltip" id="tip-d4-07-temp" role="tooltip">temperature — параметр API, влияющий на случайность выбора следующих токенов. Эффект вероятностный. Temperature не делает модель умнее и не изменяет её знания.</div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-07-max">max_tokens</label>
+          <button type="button" class="info-btn" id="d4-07-info-max" aria-expanded="false" aria-controls="tip-d4-07-max">ⓘ</button>
+        </div>
+        <input type="number" id="d4-07-max" min="16" max="2000" value="700">
+        <div class="tooltip" id="tip-d4-07-max" role="tooltip">max_tokens ограничивает максимальную длину генерации. Для корректного сравнения температур рекомендуется одинаковое значение во всех трёх запросах.</div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-07-stop">stop sequence</label>
+          <button type="button" class="info-btn" id="d4-07-info-stop" aria-expanded="false" aria-controls="tip-d4-07-stop">ⓘ</button>
+        </div>
+        <input type="text" id="d4-07-stop" maxlength="50" value="" placeholder="необязательно">
+        <div class="tooltip" id="tip-d4-07-stop" role="tooltip">stop задаёт последовательность, при появлении которой API прекращает дальнейшую генерацию. Для чистого сравнения temperature рекомендуется одинаковый stop во всех трёх запросах.</div>
+      </div>
+    </div>
+    <button type="button" class="primary-btn" id="d4-07-send">Отправить</button>
+    <span class="loading hidden" id="d4-07-loading">Запрос к DeepSeek выполняется…</span>
+    <p id="d4-07-error" class="error hidden"></p>
+    <h3 class="applied-heading">Фактически отправленные параметры API</h3>
+    <pre id="d4-07-params" class="api-preview"></pre>
+    <h3 class="applied-heading">Ответ DeepSeek</h3>
+    <div id="d4-07-answer" class="answer"></div>
+    <div class="finish-row">Причина завершения: <code id="d4-07-finish">—</code>
+      <span id="d4-07-usage" class="unit"></span></div>
+  </section>
+
+  <!-- Temperature 1.2 -->
+  <section class="d4-sub hidden" id="d4-panel-t12">
+    <h2>Temperature = 1.2</h2>
+    <p class="no-controls-note">Повышенная вариативность. Формулировки могут быть более разнообразными и неожиданными.</p>
+    <div class="d4-controls">
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-12-temp">Temperature</label>
+          <button type="button" class="info-btn" id="d4-12-info-temp" aria-expanded="false" aria-controls="tip-d4-12-temp">ⓘ</button>
+        </div>
+        <input type="number" id="d4-12-temp" min="0" max="2" step="0.1" value="1.2">
+        <p class="field-hint" id="d4-12-assignment">Значение по заданию: 1.2</p>
+        <div class="tooltip" id="tip-d4-12-temp" role="tooltip">temperature — параметр API, влияющий на случайность выбора следующих токенов. Высокая temperature может увеличить разнообразие формулировок и идей, но также снизить стабильность и точность. Эффект вероятностный. Temperature не делает модель умнее.</div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-12-max">max_tokens</label>
+          <button type="button" class="info-btn" id="d4-12-info-max" aria-expanded="false" aria-controls="tip-d4-12-max">ⓘ</button>
+        </div>
+        <input type="number" id="d4-12-max" min="16" max="2000" value="700">
+        <div class="tooltip" id="tip-d4-12-max" role="tooltip">max_tokens ограничивает максимальную длину генерации. Для корректного сравнения температур рекомендуется одинаковое значение во всех трёх запросах.</div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <label for="d4-12-stop">stop sequence</label>
+          <button type="button" class="info-btn" id="d4-12-info-stop" aria-expanded="false" aria-controls="tip-d4-12-stop">ⓘ</button>
+        </div>
+        <input type="text" id="d4-12-stop" maxlength="50" value="" placeholder="необязательно">
+        <div class="tooltip" id="tip-d4-12-stop" role="tooltip">stop задаёт последовательность, при появлении которой API прекращает дальнейшую генерацию. Для чистого сравнения temperature рекомендуется одинаковый stop во всех трёх запросах.</div>
+      </div>
+    </div>
+    <button type="button" class="primary-btn" id="d4-12-send">Отправить</button>
+    <span class="loading hidden" id="d4-12-loading">Запрос к DeepSeek выполняется…</span>
+    <p id="d4-12-error" class="error hidden"></p>
+    <h3 class="applied-heading">Фактически отправленные параметры API</h3>
+    <pre id="d4-12-params" class="api-preview"></pre>
+    <h3 class="applied-heading">Ответ DeepSeek</h3>
+    <div id="d4-12-answer" class="answer"></div>
+    <div class="finish-row">Причина завершения: <code id="d4-12-finish">—</code>
+      <span id="d4-12-usage" class="unit"></span></div>
+  </section>
+
+  <!-- "Мой вывод" -->
+  <section class="d4-sub hidden" id="d4-panel-out">
+    <h2>Мой вывод</h2>
+    <p class="cost-note">Каждое нажатие «Отправить» выполняет 1 запрос к DeepSeek API. Для задания с temperature 0, 0.7 и 1.2 потребуется 3 API-запроса.</p>
+
+    <h3 class="applied-heading">Сравнение результатов</h3>
+    <p id="d4-fair-indicator" class="field-hint"></p>
+    <table class="compare-table">
+      <thead><tr><th>Temperature</th><th>finish_reason</th><th>Output tokens</th><th>Выполнен</th></tr></thead>
+      <tbody id="d4-compare-tbody"></tbody>
+    </table>
+
+    <div id="d4-answers-block"></div>
+
+    <h3 class="applied-heading">Субъективные оценки (1–5)</h3>
+    <div class="rating-grid" id="d4-ratings">
+    <div class="rating-box" data-rating="0">
+      <h4>Temperature 0</h4>
+      <div class="rating-row"><label for="d4-r-0-acc">Точность:</label><select id="d4-r-0-acc"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-0-crea">Креативность:</label><select id="d4-r-0-crea"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-0-dive">Разнообразие:</label><select id="d4-r-0-dive"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-0-comment" style="align-self:flex-start">Комментарий:</label></div>
+      <textarea id="d4-r-0-comment" rows="2" style="width:100%;min-height:48px"></textarea>
+    </div>
+    <div class="rating-box" data-rating="07">
+      <h4>Temperature 0.7</h4>
+      <div class="rating-row"><label for="d4-r-07-acc">Точность:</label><select id="d4-r-07-acc"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-07-crea">Креативность:</label><select id="d4-r-07-crea"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-07-dive">Разнообразие:</label><select id="d4-r-07-dive"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-07-comment" style="align-self:flex-start">Комментарий:</label></div>
+      <textarea id="d4-r-07-comment" rows="2" style="width:100%;min-height:48px"></textarea>
+    </div>
+    <div class="rating-box" data-rating="12">
+      <h4>Temperature 1.2</h4>
+      <div class="rating-row"><label for="d4-r-12-acc">Точность:</label><select id="d4-r-12-acc"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-12-crea">Креативность:</label><select id="d4-r-12-crea"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-12-dive">Разнообразие:</label><select id="d4-r-12-dive"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select></div>
+      <div class="rating-row"><label for="d4-r-12-comment" style="align-self:flex-start">Комментарий:</label></div>
+      <textarea id="d4-r-12-comment" rows="2" style="width:100%;min-height:48px"></textarea>
+    </div>
+    </div>
+
+    <h3 class="applied-heading">Для каких задач подходит каждая температура?</h3>
+    <div class="field">
+      <label for="d4-out-t0use">Temperature 0</label>
+      <textarea id="d4-out-t0use" rows="2">Подходит для задач, где важны стабильность, точность формулировок и минимальная вариативность.</textarea>
+    </div>
+    <div class="field">
+      <label for="d4-out-t07use">Temperature 0.7</label>
+      <textarea id="d4-out-t07use" rows="2">Подходит для большинства обычных диалоговых и творческих задач, где нужен баланс между предсказуемостью и разнообразием.</textarea>
+    </div>
+    <div class="field">
+      <label for="d4-out-t12use">Temperature 1.2</label>
+      <textarea id="d4-out-t12use" rows="2">Подходит для генерации идей, вариантов формулировок и творческих экспериментов, где допустима повышенная вариативность.</textarea>
+    </div>
+
+    <div class="field">
+      <div class="field-label-row"><label for="d4-conclusion">Итоговый вывод</label></div>
+      <textarea id="d4-conclusion" rows="4" placeholder="Сравнив три ответа, я заметил, что..."></textarea>
+    </div>
+  </section>
+</main>

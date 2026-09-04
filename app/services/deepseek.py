@@ -38,6 +38,7 @@ logger = logging.getLogger("app.services.deepseek")
 
 from app.schemas.reasoning import ReasoningRequest, ReasoningResponse  # noqa: E402
 from app.services.grading import grade_task  # noqa: E402
+from app.schemas.temperature import TemperatureRequest, TemperatureResponse  # noqa: E402
 
 # Application-level default output-token cap used by /api/chat and by the
 # UNRESTRICTED side of a comparison. It keeps normal responses bounded and
@@ -489,6 +490,45 @@ class DeepSeekService:
             status=grade_task(request.task, answer),
         )
 
+    async def complete_with_temperature(
+        self, request: TemperatureRequest
+    ) -> TemperatureResponse:
+        """Day 4: send the message with the given REAL temperature value."""
+        logger.info(
+            "temperature request started temperature=%s message_length=%s "
+            "max_tokens=%s stop_configured=%s",
+            request.temperature,
+            len(request.message),
+            request.max_tokens,
+            bool(request.stop_sequence),
+        )
+        content, finish, usage = await self._call(
+            [
+                {"role": "system", "content": self._settings.system_prompt},
+                {"role": "user", "content": request.message},
+            ],
+            max_tokens=request.max_tokens,
+            stop=request.stop_sequence,
+            temperature=request.temperature,
+        )
+        logger.info(
+            "temperature request completed finish_reason=%s content_length=%s usage=%s",
+            finish,
+            len(content),
+            usage,
+        )
+        return TemperatureResponse(
+            answer=content,
+            finish_reason=finish,
+            usage=usage,
+            applied_parameters={
+                "model": self._settings.deepseek_model,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "stop": [request.stop_sequence] if request.stop_sequence else None,
+            },
+        )
+
     async def _call(
         self,
         messages: list[dict[str, str]],
@@ -496,6 +536,7 @@ class DeepSeekService:
         response_format: dict | None = None,
         max_tokens: int | None = None,
         stop: str | None = None,
+        temperature: float = 0.7,
     ):
         """Run one Chat Completions call and return raw provider fields.
 
@@ -508,7 +549,7 @@ class DeepSeekService:
         params: dict = {
             "model": self._settings.deepseek_model,
             "messages": messages,
-            "temperature": 0.7,
+            "temperature": temperature,
         }
         if response_format is not None:
             params["response_format"] = response_format

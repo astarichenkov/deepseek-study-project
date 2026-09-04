@@ -9,6 +9,7 @@ from app.config import Settings, get_settings
 from app.schemas.chat import ChatRequest, ChatResponse, ErrorResponse
 from app.schemas.compare import CompareRequest, CompareResponse
 from app.schemas.reasoning import ReasoningRequest, ReasoningResponse
+from app.schemas.temperature import TemperatureRequest, TemperatureResponse
 from app.services.deepseek import DeepSeekError, DeepSeekService
 
 router = APIRouter()
@@ -106,5 +107,22 @@ async def reasoning(
     """
     try:
         return await service.reasoning(payload)
+    except DeepSeekError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+@router.post(
+    "/api/temperature",
+    response_model=TemperatureResponse,
+    responses=_PROVIDER_ERROR_RESPONSES,
+)
+async def temperature_run(
+    payload: TemperatureRequest,
+    service: DeepSeekService = Depends(get_deepseek_service),
+) -> TemperatureResponse:
+    """Day 4: send the SAME message with the given temperature (real API
+    parameter). One request = one provider call. No JSON mode.
+    """
+    try:
+        return await service.complete_with_temperature(payload)
     except DeepSeekError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
